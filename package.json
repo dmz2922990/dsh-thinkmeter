@@ -1,20 +1,28 @@
 {
   "name": "dsh-thinkmeter",
   "description": "DSH client plugin: replace the streaming Think reasoning preview with a live token-count display.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "main": "src/index.js",
+  "main": "index.js",
   "exports": {
-    ".": "./src/index.js",
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
   "dsh": {
     "client": {
       "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   },
   "files": [
+    "index.js",
+    "client.js",
     "src/index.js",
+    "cordis.patch.yml",
     "README.md",
     "README.zh.md"
   ],

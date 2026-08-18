@@ -16,7 +16,13 @@
 
 ## 实现原理
 
-Think 行内嵌于官方 `assistant-step` 聊天节点渲染器，没有独立扩展 Slot。本插件在 Cordis Slot 系统中注册相同的 keyed 条目（`conversation.chat.node`，key 为 `assistant-step`），以轻量渲染器影子化（shadow）官方渲染器。插件停止或移除后，官方渲染器自动恢复。
+本包是一个规范的 DSH profile bundle：
+
+- `cordis.patch.yml` — bundle patch，插入 `thinkmeter` 插件行（package.json 中的 `dsh.bundle.patch`），因此 `dsh plugin add` 安装后会自动并入 profile 的 layer 列表
+- `index.js` — 空 Host 半体（纯 UI 插件）
+- `client.js` — 浏览器 bundle，采用 `window.__ModuleLoader__.load` 格式（`exports["./client"]`，由 `dsh.client.platform: web` 声明）
+
+Think 行内嵌于官方 `assistant-step` 聊天节点渲染器，没有独立扩展 Slot。浏览器半体在 Cordis Slot 系统中注册相同的 keyed 条目（`conversation.chat.node`，key 为 `assistant-step`），以轻量渲染器影子化（shadow）官方渲染器。插件移除后，官方渲染器自动恢复。
 
 > **已知取舍**：插件生效期间，普通回复文本块以纯文本（pre-wrap）渲染，而非完整 Markdown，因为轻量渲染器无法复用官方 Markdown 组件。
 

@@ -17,7 +17,13 @@ While the model is thinking, the shipped UI streams the latest line of the reaso
 
 ## How it works
 
-The Think row is embedded inside the shipped `assistant-step` chat-node renderer, with no dedicated extension slot. This plugin registers the same keyed entry (`conversation.chat.node`, key `assistant-step`) in the Cordis slot system, shadowing the shipped renderer with a lightweight one. When the plugin stops or is removed, the shipped renderer is restored automatically.
+The package is a proper DSH profile bundle:
+
+- `cordis.patch.yml` — bundle patch inserting the `thinkmeter` plugin row (`dsh.bundle.patch` in package.json), so `dsh plugin add` reconciles it into the profile's layer list automatically.
+- `index.js` — empty host half (pure UI plugin).
+- `client.js` — browser bundle in the `window.__ModuleLoader__.load` format (`exports["./client"]`, declared via `dsh.client.platform: web`).
+
+The Think row itself is embedded inside the shipped `assistant-step` chat-node renderer, with no dedicated extension slot. The browser half registers the same keyed entry (`conversation.chat.node`, key `assistant-step`) in the Cordis slot system, shadowing the shipped renderer with a lightweight one. When the plugin is removed, the shipped renderer is restored automatically.
 
 > **Known trade-off:** while this plugin is active, plain assistant text blocks render as pre-wrapped plain text instead of full Markdown, because the dynamic/lightweight renderer cannot reuse the shipped Markdown components.
 
