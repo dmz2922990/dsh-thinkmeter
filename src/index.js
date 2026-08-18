@@ -76,8 +76,9 @@ function ThinkRow({ text, running, usage }) {
       ? usage.reasoningTokens
       : undefined
   const count = exact !== undefined ? exact : estimateTokens(text)
+  const title = running ? 'Thinking' : 'Think'
   const label = running
-    ? `思考中 · ${exact !== undefined ? fmt(exact) : '≈' + fmt(count)} tokens`
+    ? `${exact !== undefined ? fmt(exact) : '≈' + fmt(count)} tokens`
     : `Think · ${fmt(count)} tokens`
   return React.createElement(
     'div',
@@ -98,7 +99,7 @@ function ThinkRow({ text, running, usage }) {
         },
       },
       React.createElement('span', { className: 'tkcnt-chevron', 'data-open': isOpen || undefined }, '▸'),
-      React.createElement('span', { className: 'tkcnt-title' }, 'Think'),
+      React.createElement('span', { className: 'tkcnt-title' }, title),
       React.createElement('span', { className: 'tkcnt-summary' }, label),
     ),
     isOpen ? React.createElement('div', { className: 'tkcnt-body' }, text) : null,
