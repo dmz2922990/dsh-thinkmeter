@@ -8,7 +8,7 @@ While the model is thinking, the shipped UI streams the latest line of the reaso
 
 | State | Display |
 | --- | --- |
-| Running | `Thinking ≈1,234 tokens` (with sweep animation) |
+| Running | `Thinking ≈ 1,234 tokens` (with sweep animation) |
 | Settled | `Think · 1,234 tokens` |
 
 - Settled counts use the exact `usage.reasoningTokens` reported by the model when available; otherwise a heuristic estimate (CJK chars × 0.6 + other chars ÷ 4).

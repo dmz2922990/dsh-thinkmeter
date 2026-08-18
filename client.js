@@ -78,7 +78,7 @@ window.__ModuleLoader__.load({
 			var count = exact !== undefined ? exact : estimateTokens(props.text);
 			var title = props.running ? "Thinking" : "Think";
 			var label = props.running
-				? (exact !== undefined ? fmt(exact) : "≈" + fmt(count)) + " tokens"
+				? (exact !== undefined ? fmt(exact) : "≈ " + fmt(count)) + " tokens"
 				: "Think · " + fmt(count) + " tokens";
 			return React.createElement(
 				"div",

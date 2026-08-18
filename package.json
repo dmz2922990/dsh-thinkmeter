@@ -1,7 +1,7 @@
 {
   "name": "dsh-thinkmeter",
   "description": "DSH client plugin: replace the streaming Think reasoning preview with a live token-count display.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "main": "index.js",
   "exports": {

@@ -8,7 +8,7 @@
 
 | 状态 | 显示 |
 | --- | --- |
-| 生成中 | `Thinking ≈1,234 tokens`（带扫光动画） |
+| 生成中 | `Thinking ≈ 1,234 tokens`（带扫光动画） |
 | 已结束 | `Think · 1,234 tokens` |
 
 - 结束后的数量优先使用模型上报的精确 `usage.reasoningTokens`；否则使用启发式估算（CJK 字符 × 0.6 + 其他字符 ÷ 4）。

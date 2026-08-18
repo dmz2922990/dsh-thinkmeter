@@ -3,7 +3,7 @@
  *
  * Replaces the streaming "Think" reasoning preview row in the chat view with a
  * live token-count display:
- *   - running:  `思考中 · ≈1,234 tokens` (with sweep animation)
+ *   - running:  `Thinking ≈ 1,234 tokens` (with sweep animation)
  *   - settled:  `Think · 1,234 tokens` (uses exact `usage.reasoningTokens`
  *               when the model reports it, otherwise an estimate)
  *   - click the row to expand/collapse the full reasoning text
@@ -78,7 +78,7 @@ function ThinkRow({ text, running, usage }) {
   const count = exact !== undefined ? exact : estimateTokens(text)
   const title = running ? 'Thinking' : 'Think'
   const label = running
-    ? `${exact !== undefined ? fmt(exact) : '≈' + fmt(count)} tokens`
+    ? `${exact !== undefined ? fmt(exact) : '≈ ' + fmt(count)} tokens`
     : `Think · ${fmt(count)} tokens`
   return React.createElement(
     'div',
