@@ -149,7 +149,8 @@ window.__ModuleLoader__.load({
 			if (slots === undefined) return;
 			var disposeStyle = insertStyle();
 			var disposeInject = slots.inject("conversation.chat.node", function () {
-				return slots.register({ name: "conversation.chat.node", key: "assistant-step" }, AssistantStep);
+				// priority -1 shadows the shipped assistant-step entry at priority 0 (lowest renders)
+				return slots.register({ name: "conversation.chat.node", key: "assistant-step", priority: -1 }, AssistantStep);
 			});
 			ctx.effect(function () {
 				return function () {

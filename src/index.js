@@ -148,7 +148,8 @@ export const client = {
     if (slots === undefined) return
     const disposeStyle = insertStyle()
     const disposeInject = slots.inject('conversation.chat.node', () =>
-      slots.register({ name: 'conversation.chat.node', key: 'assistant-step' }, AssistantStep),
+      // priority -1 shadows the shipped assistant-step entry at priority 0 (lowest renders)
+      slots.register({ name: 'conversation.chat.node', key: 'assistant-step', priority: -1 }, AssistantStep),
     )
     ctx.effect(() => () => {
       try {
