@@ -21,7 +21,28 @@ The Think row is embedded inside the shipped `assistant-step` chat-node renderer
 
 > **Known trade-off:** while this plugin is active, plain assistant text blocks render as pre-wrapped plain text instead of full Markdown, because the dynamic/lightweight renderer cannot reuse the shipped Markdown components.
 
-## Install (static composition)
+## Install
+
+### Command (recommended)
+
+Install directly from GitHub into your profile:
+
+```bash
+dsh plugin --profile web add https://github.com/dmz2922990/dsh-thinkmeter.git
+```
+
+Replace `web` with the profile you use (e.g. `tui`, `headless`). The command forwards to `pnpm add` inside the profile directory, so any pnpm-supported specifier works (git URL, tag, local path).
+
+Upgrade / remove:
+
+```bash
+dsh plugin --profile web up dsh-thinkmeter
+dsh plugin --profile web rm dsh-thinkmeter
+```
+
+> If your machine has no GitHub credentials configured for git-over-HTTPS, use the SSH form: `git+ssh://git@github.com/dmz2922990/dsh-thinkmeter.git`.
+
+### Static composition
 
 Clone the repo next to your DSH config, then add a row to your `cordis.yml` composition:
 
@@ -31,7 +52,7 @@ plugins:
     path: ../dsh-thinkmeter
 ```
 
-Or install from a registry once published:
+Or once the package is published to a registry:
 
 ```yaml
 plugins:

@@ -20,7 +20,28 @@ Think 行内嵌于官方 `assistant-step` 聊天节点渲染器，没有独立�
 
 > **已知取舍**：插件生效期间，普通回复文本块以纯文本（pre-wrap）渲染，而非完整 Markdown，因为轻量渲染器无法复用官方 Markdown 组件。
 
-## 安装（静态组合）
+## 安装
+
+### 命令行安装（推荐）
+
+直接从 GitHub 安装到你的 profile：
+
+```bash
+dsh plugin --profile web add https://github.com/dmz2922990/dsh-thinkmeter.git
+```
+
+把 `web` 换成你实际使用的 profile（如 `tui`、`headless`）。该命令会在 profile 目录内转发给 `pnpm add`，因此任何 pnpm 支持的安装源都可用（git URL、tag、本地路径）。
+
+升级 / 卸载：
+
+```bash
+dsh plugin --profile web up dsh-thinkmeter
+dsh plugin --profile web rm dsh-thinkmeter
+```
+
+> 如果本机没有配置 git-over-HTTPS 的 GitHub 凭证，可改用 SSH 形式：`git+ssh://git@github.com/dmz2922990/dsh-thinkmeter.git`。
+
+### 静态组合
 
 将仓库克隆到 DSH 配置旁边，然后在 `cordis.yml` 组合中添加一行：
 
