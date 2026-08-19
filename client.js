@@ -59,6 +59,9 @@ window.__ModuleLoader__.load({
 			".tkgrp-item-name{color:var(--dsw-alias-label-secondary)}",
 			".tkgrp-item-state{font-size:11px;color:var(--dsw-alias-label-caption)}",
 			".tkgrp-item-args{color:var(--dsw-alias-label-tertiary);white-space:pre-wrap;word-break:break-word;font-family:var(--dsw-font-markdown-code-block-small,monospace);font-size:12px;line-height:18px;padding:2px 0 2px 20px;max-height:180px;overflow:auto}",
+			".tkgrp-dock{display:flex;justify-content:center;padding:2px 0}",
+			".tkgrp-dock-btn{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);border:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:20px;padding:2px 10px}",
+			".tkgrp-dock-btn:hover{color:var(--dsw-alias-label-primary)}",
 			"@media (prefers-reduced-motion:reduce){.tkgrp-row[data-state=running]:after{animation:none}}",
 		].join("\n");
 
@@ -229,8 +232,24 @@ window.__ModuleLoader__.load({
 
 		// ── Collapse tool calls ──
 
-		/** Expansion state per group (keyed by the run's first node key), surviving remounts. */
-		var expandedRuns = new Set();
+		/**
+		 * Global collapse state: while true (and the preference on), the tool-call
+		 * shadow is registered and groups render as count headers. Expanding
+		 * unregisters the shadow so the SHIPPED renderer shows original cards;
+		 * the dock chip re-registers it.
+		 */
+		var toolsCollapsed = true;
+		var expandListeners = new Set();
+
+		function setToolsCollapsed(value) {
+			toolsCollapsed = value;
+			for (var fn of expandListeners) {
+				try {
+					fn();
+				} catch (e) {}
+			}
+			notifyPref(); // syncShadow listens on the same channel
+		}
 
 		/** Cached sorted visible-node list, keyed by the nodes store identity. */
 		var runCache = { nodes: null, sorted: null };
@@ -282,31 +301,6 @@ window.__ModuleLoader__.load({
 			return { first: true, firstKey: list[s0].key, count: e0 - s0 + 1, running: anyRunning, nodes: runNodes };
 		}
 
-		/** Slot service reference set in apply(); used to find the shadowed shipped renderer. */
-		var slotsRef = null;
-
-		/** The shipped tool-call renderer shadowed by ours (same slot, priority 0). */
-		function findShippedToolComponent() {
-			var slots = slotsRef;
-			if (slots === null || typeof slots.entries !== "function") return null;
-			try {
-				var entries = slots.entries("conversation.chat.node");
-				for (var idx = 0; idx < entries.length; idx++) {
-					var e = entries[idx];
-					if (
-						e !== null &&
-						e !== undefined &&
-						e.options !== undefined &&
-						e.options.key === "tool-call" &&
-						e.component !== ToolGroupEntry
-					) {
-						return e.component;
-					}
-				}
-			} catch (err) {}
-			return null;
-		}
-
 		function ToolGroupEntry(props) {
 			var node = props.node;
 			var useSession = props.useSession;
@@ -317,68 +311,70 @@ window.__ModuleLoader__.load({
 			var run = useSession(function (snapshot) {
 				return toolRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
 			});
+			React.useState(false);
+			if (run === null || !run.first) return null;
+			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
+			// Expanding unregisters our shadow entirely, so the SHIPPED renderer
+			// takes over and the group shows the original tool cards.
+			return React.createElement(
+				"div",
+				{
+					className: "tkgrp-row",
+					"data-state": run.running ? "running" : "ok",
+					role: "button",
+					tabIndex: 0,
+					title: "点击展开原始工具卡片",
+					onClick: function (e) {
+						e.stopPropagation();
+						setToolsCollapsed(false);
+					},
+					onKeyDown: function (e) {
+						if (e.key === "Enter" || e.key === " ") {
+							e.preventDefault();
+							e.stopPropagation();
+							setToolsCollapsed(false);
+						}
+					},
+				},
+				React.createElement("span", { className: "tkgrp-chevron" }, "▸"),
+				React.createElement("span", { className: "tkgrp-title" }, "Tool calls"),
+				React.createElement("span", { className: "tkgrp-summary" }, header),
+			);
+		}
+
+		/** Re-collapse chip above the composer, visible while tools are expanded. */
+		function RecollapseDockRow() {
 			var state = React.useState(false);
 			var bump = state[1];
-			if (run === null || !run.first) return null;
-			// Expansion state lives in the module-level set (survives remounts);
-			// local state exists only to trigger re-renders on toggle.
-			var isOpen = expandedRuns.has(run.firstKey);
-			function toggle() {
-				if (expandedRuns.has(run.firstKey)) expandedRuns.delete(run.firstKey);
-				else expandedRuns.add(run.firstKey);
-				bump(function (v) {
-					return !v;
-				});
-			}
-			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
-			var children = [
+			React.useEffect(
+				function () {
+					var fn = function () {
+						bump(function (v) {
+							return !v;
+						});
+					};
+					expandListeners.add(fn);
+					return function () {
+						expandListeners.delete(fn);
+					};
+				},
+				[],
+			);
+			if (!readPref() || toolsCollapsed) return null;
+			return React.createElement(
+				"div",
+				{ className: "tkgrp-dock" },
 				React.createElement(
-					"div",
+					"button",
 					{
-						key: "head",
-						className: "tkgrp-row",
-						"data-state": run.running ? "running" : "ok",
-						role: "button",
-						tabIndex: 0,
-						onClick: function (e) {
-							e.stopPropagation();
-							toggle();
-						},
-						onKeyDown: function (e) {
-							if (e.key === "Enter" || e.key === " ") {
-								e.preventDefault();
-								e.stopPropagation();
-								toggle();
-							}
+						className: "tkgrp-dock-btn",
+						onClick: function () {
+							setToolsCollapsed(true);
 						},
 					},
-					React.createElement("span", { className: "tkgrp-chevron", "data-open": isOpen || undefined }, "▸"),
-					React.createElement("span", { className: "tkgrp-title" }, "Tool calls"),
-					React.createElement("span", { className: "tkgrp-summary" }, header),
+					"▸ 重新折叠工具调用",
 				),
-			];
-			if (isOpen) {
-				// Delegate to the shipped tool-call renderer with each run node's own
-				// props, so expanded groups show the ORIGINAL tool cards.
-				var shipped = findShippedToolComponent();
-				if (shipped !== null) {
-					for (var i = 0; i < run.nodes.length; i++) {
-						var n = run.nodes[i];
-						children.push(
-							React.createElement(shipped, Object.assign({}, props, { key: n.key, node: n })),
-						);
-					}
-				} else {
-					children.push(
-						React.createElement(
-							"div",
-							{ key: "fallback", className: "tkgrp-summary" },
-							"(原始渲染器不可用)",
-						),
-					);
-				}
-			}
-			return React.createElement("div", { className: "tkgrp-root" }, children);
+			);
 		}
 
 		function CollapseToolsSettingRow() {
@@ -393,7 +389,7 @@ window.__ModuleLoader__.load({
 					React.createElement(
 						"div",
 						{ className: "tkset-desc" },
-						"开启后，连续的工具调用折叠为一个分组框，仅显示调用数量；展开可查看每个调用的名称与参数",
+						"开启后，连续的工具调用折叠为分组框并显示数量；点击分组框展开为原始工具卡片，再用输入框上方的按钮重新折叠",
 					),
 				),
 				React.createElement(
@@ -414,7 +410,6 @@ window.__ModuleLoader__.load({
 		function apply(ctx) {
 			var slots = ctx.get("slots");
 			if (slots === undefined) return;
-			slotsRef = slots;
 			var disposeStyle = insertStyle();
 
 			// ThinkMeter: always-on shadow of the shipped assistant-step renderer.
@@ -431,15 +426,25 @@ window.__ModuleLoader__.load({
 				);
 			});
 
-			// Tool-call group shadow: registered only while the preference is on,
-			// so turning it off restores the shipped tool cards.
+			// Re-collapse chip above the composer (renders only while expanded).
+			var disposeDock = slots.inject("conversation.input.dock", function () {
+				return slots.register(
+					{ name: "conversation.input.dock", id: "thinkmeter-recollapse", order: 100, label: "重新折叠工具调用" },
+					RecollapseDockRow,
+				);
+			});
+
+			// Tool-call group shadow: registered only while the preference is on
+			// AND the user has not expanded; unregistering lets the shipped
+			// renderer show the ORIGINAL tool cards.
 			var shadowDisp = null;
 			function syncShadow() {
-				if (readPref() && shadowDisp === null) {
+				var want = readPref() && toolsCollapsed;
+				if (want && shadowDisp === null) {
 					shadowDisp = slots.inject("conversation.chat.node", function () {
 						return slots.register({ name: "conversation.chat.node", key: "tool-call", priority: -1 }, ToolGroupEntry);
 					});
-				} else if (!readPref() && shadowDisp !== null) {
+				} else if (!want && shadowDisp !== null) {
 					try {
 						shadowDisp();
 					} catch (e) {}
@@ -447,17 +452,22 @@ window.__ModuleLoader__.load({
 				}
 			}
 			prefListeners.add(syncShadow);
+			expandListeners.add(syncShadow);
 			syncShadow();
 
 			ctx.effect(function () {
 				return function () {
 					prefListeners.delete(syncShadow);
+					expandListeners.delete(syncShadow);
 					if (shadowDisp !== null) {
 						try {
 							shadowDisp();
 						} catch (e) {}
 						shadowDisp = null;
 					}
+					try {
+						disposeDock && disposeDock();
+					} catch (e) {}
 					try {
 						disposeSettings && disposeSettings();
 					} catch (e) {}
@@ -467,7 +477,6 @@ window.__ModuleLoader__.load({
 					try {
 						disposeStyle();
 					} catch (e) {}
-					slotsRef = null;
 				};
 			});
 		}
