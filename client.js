@@ -70,7 +70,9 @@ window.__ModuleLoader__.load({
 			".tkgrp-dock{display:flex;justify-content:center;padding:2px 0}",
 			".tkgrp-dock-btn{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);border:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:20px;padding:2px 10px}",
 			".tkgrp-dock-btn:hover{color:var(--dsw-alias-label-primary)}",
-			".tkgrp-out{color:var(--dsw-alias-label-tertiary);white-space:pre-wrap;word-break:break-word;padding:6px 0 4px 4px;font-size:14px;line-height:24px}",
+			".tkgrp-out{color:var(--dsw-alias-label-tertiary);white-space:pre-wrap;word-break:break-word;padding:2px 0 4px 22px;font-size:14px;line-height:24px}",
+			".tkgrp-outrow{display:flex;align-items:center;gap:6px;min-height:22px;font-size:12px;line-height:18px;cursor:pointer;user-select:none;color:var(--dsw-alias-label-caption);padding:4px 0 2px 4px}",
+			".tkgrp-outlabel{font-variant-numeric:tabular-nums}",
 			"@media (prefers-reduced-motion:reduce){.tkgrp-row[data-state=running]:after{animation:none}}",
 		].join("\n");
 
@@ -547,7 +549,7 @@ window.__ModuleLoader__.load({
 			if (!run.first) {
 				return hiddenMarker();
 			}
-			return RoundView(props, run);
+			return React.createElement(RoundView, { props: props, run: run });
 		}
 
 		/** Layout-invisible marker rendered by hidden round members. */
@@ -556,11 +558,17 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * One round: collapsed card (Think summary + tool count) on top, the
-		 * think OUTPUT text as an always-visible divider below, and (for the
-		 * final answer step) the answer text after it.
+		 * One round: collapsed card (Think summary + tool count) on top; the
+		 * think OUTPUT text folds into a slim disclosure below (collapsed by
+		 * default); the final answer step's text renders after it.
 		 */
-		function RoundView(props, run) {
+		function RoundView(props) {
+			var run = props.run;
+			var propsSource = props.props;
+			// Think output disclosure, collapsed by default.
+			var thinkState = React.useState(false);
+			var thinkOpen = thinkState[0];
+			var setThinkOpen = thinkState[1];
 			var isOpen = runOpen(run);
 			var anchor = run.nodes[0];
 			var anchorData = anchor !== undefined && anchor !== null ? anchor.data : undefined;
@@ -604,12 +612,12 @@ window.__ModuleLoader__.load({
 				// Tool members delegate to the SHIPPED renderer (its toolview
 				// child slot goes through our registry-backed dispatch).
 				var shipped = findShippedToolComponent();
-				var kit = kitOf(props);
+				var kit = kitOf(propsSource);
 				for (var i = 0; i < run.nodes.length; i++) {
 					var n = run.nodes[i];
 					if (n.kind !== "tool-call") continue;
 					if (shipped !== null) {
-						var delegatedProps = Object.assign({}, props, {
+						var delegatedProps = Object.assign({}, propsSource, {
 							renderSlot: function (key, owner, opts) {
 								return dispatchSlot(key, owner, opts, kit);
 							},
@@ -625,24 +633,64 @@ window.__ModuleLoader__.load({
 					);
 				}
 			}
-			// Think output divider (always visible) + answer text for the anchor.
+			// Think output disclosure (folded by default) + answer text.
 			if (hasReasoningText(anchor)) {
 				var blocks = Array.isArray(anchorData !== undefined && anchorData !== null ? anchorData.blocks : []) ? anchorData.blocks : [];
+				var outputs = [];
+				var answers = [];
 				for (var b = 0; b < blocks.length; b++) {
 					var block = blocks[b];
 					if (block === undefined || block === null) continue;
 					if (block.kind === "reasoning" && typeof block.text === "string" && block.text.trim() !== "") {
-						children.push(
-							React.createElement(
-								"div",
-								{ key: "out" + b, className: "tkgrp-out" },
-								block.text.replace(/^\n+/, ""),
-							),
-						);
+						outputs.push(block.text.replace(/^\n+/, ""));
 					} else if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
 						var answer = renderTextBlock("ans" + b, block.text.replace(/^\n+/, ""), false);
-						if (answer !== null) children.push(answer);
+						if (answer !== null) answers.push(answer);
 					}
+				}
+				if (outputs.length > 0) {
+					var thinkChildren = [];
+					for (var o = 0; o < outputs.length; o++) {
+						thinkChildren.push(
+							React.createElement("div", { key: "out" + o, className: "tkgrp-out" }, outputs[o]),
+						);
+					}
+					children.push(
+						React.createElement(
+							"div",
+							{ key: "think", className: "tkgrp-think" },
+							React.createElement(
+								"div",
+								{
+									className: "tkgrp-outrow",
+									role: "button",
+									tabIndex: 0,
+									title: thinkOpen ? "收起思考输出" : "展开思考输出",
+									onClick: function (e) {
+										e.stopPropagation();
+										setThinkOpen(function (v) {
+											return !v;
+										});
+									},
+									onKeyDown: function (e) {
+										if (e.key === "Enter" || e.key === " ") {
+											e.preventDefault();
+											e.stopPropagation();
+											setThinkOpen(function (v) {
+												return !v;
+											});
+										}
+									},
+								},
+								React.createElement("span", { className: "tkgrp-chevron", "data-open": thinkOpen || undefined }, "▸"),
+								React.createElement("span", { className: "tkgrp-outlabel" }, "思考输出"),
+							),
+							thinkOpen ? thinkChildren : null,
+						),
+					);
+				}
+				for (var a = 0; a < answers.length; a++) {
+					children.push(answers[a]);
 				}
 			}
 			return React.createElement(
