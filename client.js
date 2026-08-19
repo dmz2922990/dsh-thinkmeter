@@ -947,13 +947,12 @@ window.__ModuleLoader__.load({
 			return t;
 		}
 
-		/** Cached visible user-node summary: by nodes identity, or by content
-		 *  signature when the store Map is recreated on every snapshot. */
-		var userCache = { nodes: null, list: null, sig: null };
+		/** Visible user-node summary, stable by CONTENT (not Map identity, which
+		 *  can be mutated in place when "load older" prepends history). */
+		var userCache = { list: null, sig: null };
 
 		function userEntries(nodes) {
 			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return [];
-			if (userCache.nodes === nodes && userCache.list !== null) return userCache.list;
 			var list = [];
 			for (var n of nodes.values()) {
 				if (n === undefined || n === null) continue;
@@ -967,11 +966,8 @@ window.__ModuleLoader__.load({
 			var sig = list.map(function (x) {
 				return x.key + "|" + x.text.length;
 			}).join(",");
-			if (userCache.sig === sig && userCache.list !== null) {
-				userCache.nodes = nodes;
-				return userCache.list;
-			}
-			userCache = { nodes: nodes, list: list, sig: sig };
+			if (userCache.sig === sig && userCache.list !== null) return userCache.list;
+			userCache = { list: list, sig: sig };
 			return list;
 		}
 
