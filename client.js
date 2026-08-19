@@ -311,20 +311,24 @@ window.__ModuleLoader__.load({
 			var node = props.node;
 			var useSession = props.useSession;
 			if (typeof useSession !== "function" || node === undefined) return null;
+			// All hooks run unconditionally: a node may transition between
+			// first-of-run and non-first across renders, and React requires a
+			// stable hook count.
 			var run = useSession(function (snapshot) {
 				return toolRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
 			});
+			var state = React.useState(false);
+			var bump = state[1];
 			if (run === null || !run.first) return null;
-			// Expansion lives in the module-level set so it survives remounts and
-			// snapshot churn; local state only mirrors it for re-rendering.
-			var state = React.useState(expandedRuns.has(run.firstKey));
-			var isOpen = state[0];
-			var setOpen = state[1];
+			// Expansion state lives in the module-level set (survives remounts);
+			// local state exists only to trigger re-renders on toggle.
+			var isOpen = expandedRuns.has(run.firstKey);
 			function toggle() {
-				var next = !expandedRuns.has(run.firstKey);
-				if (next) expandedRuns.add(run.firstKey);
-				else expandedRuns.delete(run.firstKey);
-				setOpen(next);
+				if (expandedRuns.has(run.firstKey)) expandedRuns.delete(run.firstKey);
+				else expandedRuns.add(run.firstKey);
+				bump(function (v) {
+					return !v;
+				});
 			}
 			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
 			var children = [
