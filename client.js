@@ -231,7 +231,7 @@ window.__ModuleLoader__.load({
 
 		/**
 		 * Compute the consecutive visible tool-call run around `selfKey`.
-		 * Reads only the leaf fields needed; returns a small owned object.
+		 * Returns the run's live node references for delegated rendering.
 		 */
 		function toolRunOf(nodes, selfKey) {
 			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return null;
@@ -257,55 +257,41 @@ window.__ModuleLoader__.load({
 			var e0 = i;
 			while (e0 + 1 < list.length && list[e0 + 1].kind === "tool-call") e0++;
 			if (s0 !== i) return { first: false };
-			var items = [];
+			var runNodes = [];
 			var anyRunning = false;
 			for (var k = s0; k <= e0; k++) {
 				var nd = list[k];
 				var root = nd.data && nd.data.root;
-				var settled = root !== undefined && root !== null && root.kind === "tool-result";
-				if (!settled) anyRunning = true;
-				var subs = root !== undefined && root !== null && Array.isArray(root.subCalls) ? root.subCalls.length : 0;
-				items.push({
-					key: nd.key,
-					name: root !== undefined && root !== null && typeof root.name === "string" ? root.name : "tool",
-					settled: settled,
-					subCount: subs,
-					argsRaw: root !== undefined && root !== null && typeof root.argsRaw === "string" ? root.argsRaw.slice(0, 4000) : "",
-				});
+				// Settled blocks carry kind 'tool-result'; running blocks have no kind.
+				if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
+				runNodes.push(nd);
 			}
-			return { first: true, count: e0 - s0 + 1, running: anyRunning, items: items };
+			return { first: true, count: e0 - s0 + 1, running: anyRunning, nodes: runNodes };
 		}
 
-		function ToolItem(props) {
-			var state = React.useState(false);
-			var isOpen = state[0];
-			var setOpen = state[1];
-			var item = props.item;
-			var stateText = item.settled ? "✓" : "运行中";
-			return React.createElement(
-				"div",
-				{ className: "tkgrp-item" },
-				React.createElement(
-					"div",
-					{
-						className: "tkgrp-item-head",
-						onClick: function () {
-							setOpen(function (v) {
-								return !v;
-							});
-						},
-					},
-					React.createElement("span", { className: "tkgrp-chevron", "data-open": isOpen || undefined }, "▸"),
-					React.createElement("span", { className: "tkgrp-item-name" }, item.name),
-					item.subCount > 0
-						? React.createElement("span", { className: "tkgrp-item-state" }, "+" + item.subCount + " 子调用")
-						: null,
-					React.createElement("span", { className: "tkgrp-item-state" }, stateText),
-				),
-				isOpen && item.argsRaw !== ""
-					? React.createElement("div", { className: "tkgrp-item-args" }, item.argsRaw)
-					: null,
-			);
+		/** Slot service reference set in apply(); used to find the shadowed shipped renderer. */
+		var slotsRef = null;
+
+		/** The shipped tool-call renderer shadowed by ours (same slot, priority 0). */
+		function findShippedToolComponent() {
+			var slots = slotsRef;
+			if (slots === null || typeof slots.entries !== "function") return null;
+			try {
+				var entries = slots.entries("conversation.chat.node");
+				for (var idx = 0; idx < entries.length; idx++) {
+					var e = entries[idx];
+					if (
+						e !== null &&
+						e !== undefined &&
+						e.options !== undefined &&
+						e.options.key === "tool-call" &&
+						e.component !== ToolGroupEntry
+					) {
+						return e.component;
+					}
+				}
+			} catch (err) {}
+			return null;
 		}
 
 		function ToolGroupEntry(props) {
@@ -349,11 +335,25 @@ window.__ModuleLoader__.load({
 				),
 			];
 			if (isOpen) {
-				var rows = [];
-				for (var i = 0; i < run.items.length; i++) {
-					rows.push(React.createElement(ToolItem, { key: run.items[i].key, item: run.items[i] }));
+				// Delegate to the shipped tool-call renderer with each run node's own
+				// props, so expanded groups show the ORIGINAL tool cards.
+				var shipped = findShippedToolComponent();
+				if (shipped !== null) {
+					for (var i = 0; i < run.nodes.length; i++) {
+						var n = run.nodes[i];
+						children.push(
+							React.createElement(shipped, Object.assign({}, props, { key: n.key, node: n })),
+						);
+					}
+				} else {
+					children.push(
+						React.createElement(
+							"div",
+							{ key: "fallback", className: "tkgrp-summary" },
+							"(原始渲染器不可用)",
+						),
+					);
 				}
-				children.push(React.createElement("div", { key: "list", className: "tkgrp-list" }, rows));
 			}
 			return React.createElement("div", { className: "tkgrp-root" }, children);
 		}
@@ -391,6 +391,7 @@ window.__ModuleLoader__.load({
 		function apply(ctx) {
 			var slots = ctx.get("slots");
 			if (slots === undefined) return;
+			slotsRef = slots;
 			var disposeStyle = insertStyle();
 
 			// ThinkMeter: always-on shadow of the shipped assistant-step renderer.
@@ -443,6 +444,7 @@ window.__ModuleLoader__.load({
 					try {
 						disposeStyle();
 					} catch (e) {}
+					slotsRef = null;
 				};
 			});
 		}
