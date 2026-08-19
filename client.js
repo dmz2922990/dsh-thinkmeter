@@ -355,7 +355,27 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * Compute the consecutive visible tool-call run around `selfKey`.
+		 * A node links a tool-call chain when it is a tool call, or the
+		 * assistant step that ISSUED tool calls (its blocks contain tool-call
+		 * entries; such steps interleave between the tool rows in real turns).
+		 * Think-only and final-answer steps are NOT links: they keep rendering
+		 * their own cards.
+		 */
+		function chainLink(node) {
+			if (node.kind === "tool-call") return true;
+			if (node.kind !== "assistant-step") return false;
+			var data = node.data;
+			if (data === undefined || data === null) return false;
+			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
+			for (var i = 0; i < blocks.length; i++) {
+				var b = blocks[i];
+				if (b !== undefined && b !== null && b.kind === "tool-call") return true;
+			}
+			return false;
+		}
+
+		/**
+		 * Compute the consecutive tool-call chain around `selfKey`.
 		 * Returns the run's live node references for delegated rendering.
 		 */
 		function toolRunOf(nodes, selfKey) {
@@ -368,22 +388,28 @@ window.__ModuleLoader__.load({
 					break;
 				}
 			}
-			if (i === -1 || list[i].kind !== "tool-call") return null;
+			if (i === -1 || !chainLink(list[i])) return null;
 			var s0 = i;
-			while (s0 > 0 && list[s0 - 1].kind === "tool-call") s0--;
+			while (s0 > 0 && chainLink(list[s0 - 1])) s0--;
 			var e0 = i;
-			while (e0 + 1 < list.length && list[e0 + 1].kind === "tool-call") e0++;
+			while (e0 + 1 < list.length && chainLink(list[e0 + 1])) e0++;
 			if (s0 !== i) return { first: false };
 			var runNodes = [];
 			var anyRunning = false;
+			var toolCount = 0;
 			for (var k = s0; k <= e0; k++) {
 				var nd = list[k];
-				var root = nd.data && nd.data.root;
-				// Settled blocks carry kind 'tool-result'; running blocks have no kind.
-				if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
+				if (nd.kind === "tool-call") {
+					toolCount++;
+					var root = nd.data && nd.data.root;
+					// Settled blocks carry kind 'tool-result'; running blocks have no kind.
+					if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
+				} else if (nd.data !== undefined && nd.data !== null && nd.data.status === "running") {
+					anyRunning = true;
+				}
 				runNodes.push(nd);
 			}
-			return { first: true, firstKey: list[s0].key, count: e0 - s0 + 1, running: anyRunning, nodes: runNodes };
+			return { first: true, firstKey: list[s0].key, count: toolCount, running: anyRunning, nodes: runNodes };
 		}
 
 		/** The shipped tool-call renderer shadowed by ours (same slot, priority 0). */
@@ -439,8 +465,18 @@ window.__ModuleLoader__.load({
 			// removes the whole flow wrapper from layout (flex gap included),
 			// independent of :empty support.
 			if (!run.first) {
-				return React.createElement("div", { className: "tkgrp-hidden", style: { display: "none" } });
+				return hiddenMarker();
 			}
+			return GroupCard(props, run);
+		}
+
+		/** Layout-invisible marker rendered by hidden chain members. */
+		function hiddenMarker() {
+			return React.createElement("div", { className: "tkgrp-hidden", style: { display: "none" } });
+		}
+
+		/** The collapsed/expanded group card for one tool-call chain. */
+		function GroupCard(props, run) {
 			var isOpen = expandedRuns.has(run.firstKey);
 			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
 			var children = [
@@ -471,24 +507,29 @@ window.__ModuleLoader__.load({
 				),
 			];
 			if (isOpen) {
-				// Delegate each run node to the SHIPPED tool-call renderer. The
-				// shipped component dispatches its toolview child slot through
-				// props.renderSlot — a framework binding our entry cannot obtain
-				// (the child slot is already declared by the shipped entry), so we
-				// supply our own registry-backed dispatch with the same kit.
+				// Tool nodes delegate to the SHIPPED renderer (its toolview child
+				// slot goes through our registry-backed dispatch); interleaved
+				// assistant steps render through our own AssistantStep.
 				var shipped = findShippedToolComponent();
-				if (shipped !== null) {
-					var kit = kitOf(props);
-					var delegatedProps = Object.assign({}, props, {
-						renderSlot: function (key, owner, opts) {
-							return dispatchSlot(key, owner, opts, kit);
-						},
-					});
-					for (var i = 0; i < run.nodes.length; i++) {
-						var n = run.nodes[i];
-						children.push(React.createElement(shipped, Object.assign({}, delegatedProps, { key: n.key, node: n })));
+				var kit = kitOf(props);
+				for (var i = 0; i < run.nodes.length; i++) {
+					var n = run.nodes[i];
+					if (n.kind === "tool-call") {
+						if (shipped !== null) {
+							var delegatedProps = Object.assign({}, props, {
+								renderSlot: function (key, owner, opts) {
+									return dispatchSlot(key, owner, opts, kit);
+								},
+							});
+							children.push(
+								React.createElement(shipped, Object.assign({}, delegatedProps, { key: n.key, node: n })),
+							);
+						}
+					} else {
+						children.push(React.createElement(AssistantStep, { key: n.key, node: n }));
 					}
-				} else {
+				}
+				if (shipped === null && run.count > 0) {
 					children.push(
 						React.createElement("div", { key: "fallback", className: "tkgrp-summary" }, "(原始渲染器不可用)"),
 					);
@@ -499,6 +540,43 @@ window.__ModuleLoader__.load({
 				{ className: "tkgrp-root", "data-open": isOpen || undefined },
 				children,
 			);
+		}
+
+		/**
+		 * Assistant-step entry, chain-aware: a step whose blocks issued tool
+		 * calls hides inside the tool group (or anchors its card when it starts
+		 * the chain); every other step renders the plain think meter.
+		 */
+		function AssistantStepChainAware(props) {
+			var node = props.node;
+			var useSession = props.useSession;
+			if (typeof useSession !== "function" || node === undefined) return AssistantStep(props);
+			// Hooks unconditional (see ToolGroupEntry note).
+			var run = useSession(function (snapshot) {
+				return toolRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
+			});
+			var state = React.useState(false);
+			var bump = state[1];
+			React.useEffect(
+				function () {
+					var fn = function () {
+						bump(function (v) {
+							return !v;
+						});
+					};
+					expandListeners.add(fn);
+					return function () {
+						expandListeners.delete(fn);
+					};
+				},
+				[],
+			);
+			if (run === null) return AssistantStep(props);
+			if (!run.first) return hiddenMarker();
+			// Only anchor the card when the chain actually has tool calls; a
+			// lone issuing step (tools not yet materialized) stays a think card.
+			if (run.count === 0) return AssistantStep(props);
+			return GroupCard(props, run);
 		}
 
 		/** Generic preference toggle row. */
@@ -564,10 +642,15 @@ window.__ModuleLoader__.load({
 			slotsRef = slots;
 			var disposeStyle = insertStyle();
 
-			// ThinkMeter: always-on shadow of the shipped assistant-step renderer.
+			// ThinkMeter + chain-aware tool grouping: the assistant-step shadow is
+			// always on; when the collapse preference is off it renders the plain
+			// think meter, otherwise chain-aware (tool-issuing steps join groups).
 			var disposeThink = slots.inject("conversation.chat.node", function () {
 				// priority -1 shadows the shipped assistant-step entry at priority 0 (lowest renders)
-				return slots.register({ name: "conversation.chat.node", key: "assistant-step", priority: -1 }, AssistantStep);
+				return slots.register(
+					{ name: "conversation.chat.node", key: "assistant-step", priority: -1, locale: "conversation" },
+					AssistantStepChainAware,
+				);
 			});
 
 			// Settings rows (Settings → General), always registered.
