@@ -355,12 +355,6 @@ window.__ModuleLoader__.load({
 			return { kind: hasText ? "think-text" : "think" };
 		}
 
-		/** Whether a node can anchor/extend a group chain by itself. */
-		function chainable(node) {
-			var info = nodeInfoOf(node);
-			return info !== null && info.kind !== "think-text";
-		}
-
 		/** Reasoning token count for one assistant step (exact when reported). */
 		function thinkTokensOf(data) {
 			if (data === undefined || data === null) return 0;
@@ -420,12 +414,27 @@ window.__ModuleLoader__.load({
 			if (i === -1) return null;
 			var selfInfo = nodeInfoOf(list[i]);
 			if (selfInfo === null) return null;
-			// Chain extent: consecutive chainable nodes, plus at most one
-			// think-text node attached at the END of the chain.
+			// Group extent — each Think output is the DIVIDER between cards:
+			//  - a 'think' node always ANCHORS a new group (never joins the
+			//    previous one);
+			//  - a 'tool' node extends back over preceding tools and absorbs at
+			//    most one immediately-preceding 'think' as its anchor;
+			//  - the group then extends forward over tools only (the next think
+			//    starts the next group), plus at most one trailing think-text.
 			var s0 = i;
-			while (s0 > 0 && chainable(list[s0 - 1])) s0--;
+			if (selfInfo.kind === "tool" || selfInfo.kind === "think-text") {
+				while (s0 > 0 && nodeInfoOf(list[s0 - 1]) !== null && nodeInfoOf(list[s0 - 1]).kind === "tool") s0--;
+				if (s0 > 0) {
+					var prevInfo = nodeInfoOf(list[s0 - 1]);
+					if (prevInfo !== null && prevInfo.kind === "think") s0--;
+				}
+			}
 			var e0 = i;
-			while (e0 + 1 < list.length && chainable(list[e0 + 1])) e0++;
+			while (e0 + 1 < list.length) {
+				var fwdInfo = nodeInfoOf(list[e0 + 1]);
+				if (fwdInfo === null || fwdInfo.kind !== "tool") break;
+				e0++;
+			}
 			var trailing = null;
 			if (e0 + 1 < list.length) {
 				var nextInfo = nodeInfoOf(list[e0 + 1]);
