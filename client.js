@@ -52,13 +52,7 @@ window.__ModuleLoader__.load({
 			".tkgrp-root[data-open]{border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px 12px 4px;background:var(--dsw-alias-bg-base);margin:4px 0 4px 4px}",
 			".tkgrp-row{display:flex;align-items:center;gap:8px;min-height:24px;font-size:14px;line-height:24px;cursor:pointer;user-select:none;position:relative;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:4px 12px;background:var(--dsw-alias-bg-base);margin:4px 0 4px 4px;width:fit-content;min-width:180px}",
 			".tkgrp-root[data-open] .tkgrp-row{border:none;border-radius:0;padding:0 0 6px;margin:0;background:transparent;min-width:0}",
-			"[data-chat-flow-kind]:empty{display:none}",
-			"[data-chat-flow-kind]:not(:has(> *)){display:none}",
-			"[data-chat-anchor-key]:empty{display:none}",
-			".tkcnt-root:empty{display:none}",
-			".tkgrp-root:empty{display:none}",
-			".tkcnt-root{margin:0}",
-			".tkgrp-root{margin:0}",
+			"[data-chat-flow-kind=tool-call]:empty{display:none}",
 			'.tkgrp-row[data-state=running]:after{content:"";position:absolute;inset-block:0;left:0;width:300px;pointer-events:none;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-bg-base) 60%,transparent) 55%,transparent 100%);animation:tkcnt-sweep 2.6s ease-out infinite}',
 			".tkgrp-chevron{color:var(--dsw-alias-label-secondary);flex-shrink:0;width:14px;text-align:center;transition:transform .15s ease}",
 			".tkgrp-chevron[data-open]{transform:rotate(90deg)}",
@@ -229,11 +223,9 @@ window.__ModuleLoader__.load({
 							usage: data.usage,
 						}),
 					);
-				} else if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
-					// Skip whitespace-only text blocks: pre-wrap would render
-					// them as blank lines. Leading newlines are stripped too.
+				} else if (block.kind === "text") {
 					children.push(
-						React.createElement("div", { key: "t" + i, className: "tkcnt-text" }, block.text.replace(/^\n+/, "")),
+						React.createElement("div", { key: "t" + i, className: "tkcnt-text" }, typeof block.text === "string" ? block.text : ""),
 					);
 				}
 			}
@@ -322,86 +314,10 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * Classify one chat node for merged grouping:
-		 *  - 'tool': a tool-call node
-		 *  - 'think': chainable — an assistant step that issues tool calls
-		 *    (intermediate steps are chainable regardless of incidental text),
-		 *    or a reasoning-only step
-		 *  - 'think-text': an assistant step with reasoning AND text but NO
-		 *    tool calls (the final answer step) — its think part may join the
-		 *    PRECEDING group as a trailing member; its text always renders alone
-		 *  - null: not groupable (text-only answer, other kinds).
+		 * Compute the consecutive visible tool-call run around `selfKey`.
+		 * Returns the run's live node references for delegated rendering.
 		 */
-		function nodeInfoOf(node) {
-			if (node.kind === "tool-call") return { kind: "tool" };
-			if (node.kind !== "assistant-step") return null;
-			var data = node.data;
-			if (data === undefined || data === null) return null;
-			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
-			var hasReasoning = false;
-			var hasText = false;
-			var hasToolCalls = false;
-			for (var i = 0; i < blocks.length; i++) {
-				var b = blocks[i];
-				if (b === undefined || b === null) continue;
-				if (b.kind === "reasoning") hasReasoning = true;
-				else if (b.kind === "text" && typeof b.text === "string" && b.text.trim() !== "") hasText = true;
-				else if (b.kind === "tool-call") hasToolCalls = true;
-			}
-			// A step that issues tool calls is always an intermediate step:
-			// chainable even when it carries visible commentary text.
-			if (hasToolCalls) return { kind: "think" };
-			if (!hasReasoning) return null;
-			return { kind: hasText ? "think-text" : "think" };
-		}
-
-		/** Reasoning token count for one assistant step (exact when reported). */
-		function thinkTokensOf(data) {
-			if (data === undefined || data === null) return 0;
-			var usage = data.usage;
-			if (typeof usage === "object" && usage !== null && typeof usage.reasoningTokens === "number") {
-				return usage.reasoningTokens;
-			}
-			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
-			var total = 0;
-			for (var i = 0; i < blocks.length; i++) {
-				var b = blocks[i];
-				if (b !== undefined && b !== null && b.kind === "reasoning" && typeof b.text === "string") {
-					total += estimateTokens(b.text);
-				}
-			}
-			return total;
-		}
-
-		/** Think duration ms for one assistant step from its final node timing. */
-		function thinkMsOf(data) {
-			var fn = data !== undefined && data !== null ? data.finalNode : undefined;
-			var timing = fn !== undefined && fn !== null ? fn.timing : undefined;
-			if (
-				timing === undefined ||
-				timing.stepStartTime === null ||
-				timing.completedTime === null
-			) {
-				return 0;
-			}
-			return Math.max(0, timing.completedTime - timing.stepStartTime);
-		}
-
-		function fmtDuration(ms) {
-			if (ms <= 0) return "";
-			if (ms < 1000) return ms + "ms";
-			return (Math.round(ms / 100) / 10).toFixed(1) + "s";
-		}
-
-		/**
-		 * Compute the merged group around `selfKey`.
-		 *
-		 * Roles: the first chainable node renders the group card ('first');
-		 * other chainable members hide ('member'); one trailing think-text
-		 * node ('trailing') joins the aggregates while its own slot keeps
-		 * rendering its text below the group.
-		 */
-		function groupRunOf(nodes, selfKey) {
+		function toolRunOf(nodes, selfKey) {
 			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return null;
 			var list = sortedVisible(nodes);
 			var i = -1;
@@ -411,76 +327,22 @@ window.__ModuleLoader__.load({
 					break;
 				}
 			}
-			if (i === -1) return null;
-			var selfInfo = nodeInfoOf(list[i]);
-			if (selfInfo === null) return null;
-			// Group extent — each Think output is the DIVIDER between cards:
-			//  - a 'think' node always ANCHORS a new group (never joins the
-			//    previous one);
-			//  - a 'tool' node extends back over preceding tools and absorbs at
-			//    most one immediately-preceding 'think' as its anchor;
-			//  - the group then extends forward over tools only (the next think
-			//    starts the next group), plus at most one trailing think-text.
+			if (i === -1 || list[i].kind !== "tool-call") return null;
 			var s0 = i;
-			if (selfInfo.kind === "tool" || selfInfo.kind === "think-text") {
-				while (s0 > 0 && nodeInfoOf(list[s0 - 1]) !== null && nodeInfoOf(list[s0 - 1]).kind === "tool") s0--;
-				if (s0 > 0) {
-					var prevInfo = nodeInfoOf(list[s0 - 1]);
-					if (prevInfo !== null && prevInfo.kind === "think") s0--;
-				}
-			}
+			while (s0 > 0 && list[s0 - 1].kind === "tool-call") s0--;
 			var e0 = i;
-			while (e0 + 1 < list.length) {
-				var fwdInfo = nodeInfoOf(list[e0 + 1]);
-				if (fwdInfo === null || fwdInfo.kind !== "tool") break;
-				e0++;
-			}
-			var trailing = null;
-			if (e0 + 1 < list.length) {
-				var nextInfo = nodeInfoOf(list[e0 + 1]);
-				if (nextInfo !== null && nextInfo.kind === "think-text") {
-					trailing = list[e0 + 1];
-				}
-			}
-			if (selfInfo.kind === "think-text") {
-				// A think-text node only joins when a real chain precedes it.
-				if (s0 === i) return null;
-				return { role: "trailing", firstKey: list[s0].key };
-			}
-			if (s0 !== i) return { role: "member" };
+			while (e0 + 1 < list.length && list[e0 + 1].kind === "tool-call") e0++;
+			if (s0 !== i) return { first: false };
 			var runNodes = [];
 			var anyRunning = false;
-			var thinkTokens = 0;
-			var thinkMs = 0;
-			var toolCount = 0;
 			for (var k = s0; k <= e0; k++) {
 				var nd = list[k];
-				if (nd.kind === "tool-call") {
-					toolCount++;
-					var root = nd.data && nd.data.root;
-					// Settled blocks carry kind 'tool-result'; running blocks have no kind.
-					if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
-				} else {
-					thinkTokens += thinkTokensOf(nd.data);
-					thinkMs += thinkMsOf(nd.data);
-					if (nd.data && nd.data.status === "running") anyRunning = true;
-				}
+				var root = nd.data && nd.data.root;
+				// Settled blocks carry kind 'tool-result'; running blocks have no kind.
+				if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
 				runNodes.push(nd);
 			}
-			if (trailing !== null) {
-				thinkTokens += thinkTokensOf(trailing.data);
-				thinkMs += thinkMsOf(trailing.data);
-				if (trailing.data && trailing.data.status === "running") anyRunning = true;
-			}
-			return {
-				role: "first",
-				firstKey: list[s0].key,
-				running: anyRunning,
-				thinkTokens: thinkTokens,
-				thinkMs: thinkMs,
-				toolCount: toolCount,
-				nodes: runNodes,
-			};
+			return { first: true, firstKey: list[s0].key, count: e0 - s0 + 1, running: anyRunning, nodes: runNodes };
 		}
 
 		/** The shipped tool-call renderer shadowed by ours (same slot, priority 0). */
@@ -496,7 +358,7 @@ window.__ModuleLoader__.load({
 						e !== undefined &&
 						e.options !== undefined &&
 						e.options.key === "tool-call" &&
-						e.component !== MergedGroupEntry
+						e.component !== ToolGroupEntry
 					) {
 						return e.component;
 					}
@@ -505,49 +367,7 @@ window.__ModuleLoader__.load({
 			return null;
 		}
 
-		/** Fallback rendering for one run node outside merged grouping. */
-		function fallbackNodeRender(props, node) {
-			if (node.kind === "assistant-step") {
-				return React.createElement(AssistantStep, Object.assign({}, props, { node: node }));
-			}
-			// tool-call: delegate to the SHIPPED renderer with our registry-backed
-			// renderSlot (the framework binding is reserved to the entry that
-			// declared the toolview child slot).
-			var shipped = findShippedToolComponent();
-			if (shipped === null) return null;
-			var kit = kitOf(props);
-			var delegatedProps = Object.assign({}, props, {
-				renderSlot: function (key, owner, opts) {
-					return dispatchSlot(key, owner, opts, kit);
-				},
-			});
-			return React.createElement(shipped, Object.assign({}, delegatedProps, { node: node }));
-		}
-
-		/** Render only the text blocks of one assistant step (think folded into the group). */
-		function AssistantTextOnly(props) {
-			var data = props.node && props.node.data;
-			if (data === undefined || data === null) return null;
-			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
-			var running = data.status === "running";
-			var children = [];
-			for (var i = 0; i < blocks.length; i++) {
-				var block = blocks[i];
-				if (block === undefined || block === null) continue;
-				if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
-					children.push(
-						React.createElement("div", { key: "t" + i, className: "tkcnt-text" }, block.text.replace(/^\n+/, "")),
-					);
-				}
-			}
-			if (data.status === "interrupted") {
-				children.push(React.createElement("span", { key: "stopped", className: "tkcnt-stopped" }, "Stopped"));
-			}
-			if (children.length === 0) return null;
-			return React.createElement("div", { className: "tkcnt-root", "data-streaming": running || undefined }, children);
-		}
-
-		function MergedGroupEntry(props) {
+		function ToolGroupEntry(props) {
 			var node = props.node;
 			var useSession = props.useSession;
 			if (typeof useSession !== "function" || node === undefined) return null;
@@ -555,7 +375,7 @@ window.__ModuleLoader__.load({
 			// first-of-run and non-first across renders, and React requires a
 			// stable hook count.
 			var run = useSession(function (snapshot) {
-				return groupRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
+				return toolRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
 			});
 			var state = React.useState(false);
 			var bump = state[1];
@@ -573,27 +393,9 @@ window.__ModuleLoader__.load({
 				},
 				[],
 			);
-			// Feature off, or a node outside every group: render normally.
-			if (!readPref() || run === null) {
-				return fallbackNodeRender(props, node);
-			}
-			// Trailing think-text member: its think already counts in the group
-			// header; only its text renders, below the group card.
-			if (run.role === "trailing") {
-				return React.createElement(AssistantTextOnly, { node: node });
-			}
-			// Grouped non-first members hide; the group's first node renders them.
-			if (run.role !== "first") return null;
+			if (run === null || !run.first) return null;
 			var isOpen = expandedRuns.has(run.firstKey);
-			// Header: [Think duration & tokens, tool-call count]
-			var parts = [];
-			if (run.thinkTokens > 0) {
-				var duration = fmtDuration(run.thinkMs);
-				parts.push("Think" + (duration !== "" ? " " + duration : "") + " · " + fmt(run.thinkTokens) + " tokens");
-			}
-			if (run.toolCount > 0) parts.push(run.toolCount + " 次工具调用");
-			if (parts.length === 0) parts.push("运行中");
-			var header = parts.join("，") + (run.running ? " · 运行中" : "");
+			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
 			var children = [
 				React.createElement(
 					"div",
@@ -603,7 +405,7 @@ window.__ModuleLoader__.load({
 						"data-state": run.running ? "running" : "ok",
 						role: "button",
 						tabIndex: 0,
-						title: isOpen ? "点击折叠" : "点击展开详情",
+						title: isOpen ? "点击折叠" : "点击展开原始工具卡片",
 						onClick: function (e) {
 							e.stopPropagation();
 							toggleRun(run.firstKey);
@@ -617,20 +419,32 @@ window.__ModuleLoader__.load({
 						},
 					},
 					React.createElement("span", { className: "tkgrp-chevron", "data-open": isOpen || undefined }, "▸"),
-					React.createElement("span", { className: "tkgrp-title" }, "Think & Tools"),
+					React.createElement("span", { className: "tkgrp-title" }, "Tool calls"),
 					React.createElement("span", { className: "tkgrp-summary" }, header),
 				),
 			];
 			if (isOpen) {
-				for (var i = 0; i < run.nodes.length; i++) {
-					var n = run.nodes[i];
-					if (n.key === node.key) {
-						children.push(
-							React.createElement("div", { key: n.key }, fallbackNodeRender(props, n)),
-						);
-					} else {
-						children.push(React.createElement(GroupNodeView, { key: n.key, props: props, node: n }));
+				// Delegate each run node to the SHIPPED tool-call renderer. The
+				// shipped component dispatches its toolview child slot through
+				// props.renderSlot — a framework binding our entry cannot obtain
+				// (the child slot is already declared by the shipped entry), so we
+				// supply our own registry-backed dispatch with the same kit.
+				var shipped = findShippedToolComponent();
+				if (shipped !== null) {
+					var kit = kitOf(props);
+					var delegatedProps = Object.assign({}, props, {
+						renderSlot: function (key, owner, opts) {
+							return dispatchSlot(key, owner, opts, kit);
+						},
+					});
+					for (var i = 0; i < run.nodes.length; i++) {
+						var n = run.nodes[i];
+						children.push(React.createElement(shipped, Object.assign({}, delegatedProps, { key: n.key, node: n })));
 					}
+				} else {
+					children.push(
+						React.createElement("div", { key: "fallback", className: "tkgrp-summary" }, "(原始渲染器不可用)"),
+					);
 				}
 			}
 			return React.createElement(
@@ -638,11 +452,6 @@ window.__ModuleLoader__.load({
 				{ className: "tkgrp-root", "data-open": isOpen || undefined },
 				children,
 			);
-		}
-
-		/** Render one non-self run node inside an expanded group. */
-		function GroupNodeView(props) {
-			return fallbackNodeRender(props.props, props.node);
 		}
 
 		function CollapseToolsSettingRow() {
@@ -653,11 +462,11 @@ window.__ModuleLoader__.load({
 				React.createElement(
 					"div",
 					{ className: "tkset-info" },
-					React.createElement("div", { className: "tkset-label" }, "折叠 Think 与工具调用"),
+					React.createElement("div", { className: "tkset-label" }, "折叠工具调用"),
 					React.createElement(
 						"div",
 						{ className: "tkset-desc" },
-						"开启后，连续的思考与工具调用合并为一个分组框，显示 Think 时长、token 数与工具调用次数；点击展开原始内容，再次点击折叠",
+						"开启后，连续的工具调用折叠为分组框并显示数量；点击分组框展开为原始工具卡片，再次点击折叠",
 					),
 				),
 				React.createElement(
@@ -681,14 +490,10 @@ window.__ModuleLoader__.load({
 			slotsRef = slots;
 			var disposeStyle = insertStyle();
 
-			// Think meter + merged groups: the assistant-step shadow is always on;
-			// when the collapse preference is off it renders the plain think meter.
+			// ThinkMeter: always-on shadow of the shipped assistant-step renderer.
 			var disposeThink = slots.inject("conversation.chat.node", function () {
 				// priority -1 shadows the shipped assistant-step entry at priority 0 (lowest renders)
-				return slots.register(
-					{ name: "conversation.chat.node", key: "assistant-step", priority: -1, locale: "conversation" },
-					MergedGroupEntry,
-				);
+				return slots.register({ name: "conversation.chat.node", key: "assistant-step", priority: -1 }, AssistantStep);
 			});
 
 			// Settings row (Settings → General), always registered.
@@ -699,8 +504,8 @@ window.__ModuleLoader__.load({
 				);
 			});
 
-			// Tool-call shadow: registered only while the preference is on, so
-			// turning it off restores the shipped tool cards and plain grouping.
+			// Tool-call group shadow: registered only while the preference is on,
+			// so turning it off restores the shipped tool cards.
 			var shadowDisp = null;
 			function syncShadow() {
 				if (readPref() && shadowDisp === null) {
@@ -712,7 +517,7 @@ window.__ModuleLoader__.load({
 								priority: -1,
 								locale: "conversation",
 							},
-							MergedGroupEntry,
+							ToolGroupEntry,
 						);
 					});
 				} else if (!readPref() && shadowDisp !== null) {
