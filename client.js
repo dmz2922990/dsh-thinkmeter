@@ -53,6 +53,8 @@ window.__ModuleLoader__.load({
 			".tkgrp-row{display:flex;align-items:center;gap:8px;min-height:24px;font-size:14px;line-height:24px;cursor:pointer;user-select:none;position:relative;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:4px 12px;background:var(--dsw-alias-bg-base);margin:4px 0 4px 4px;width:fit-content;min-width:180px}",
 			".tkgrp-root[data-open] .tkgrp-row{border:none;border-radius:0;padding:0 0 6px;margin:0;background:transparent;min-width:0}",
 			"[data-chat-flow-kind=tool-call]:empty{display:none}",
+			"[data-chat-flow-kind=tool-call]:has(> .tkgrp-hidden){display:none}",
+			"[data-chat-anchor-key]:has(> .tkgrp-hidden){display:none}",
 			'.tkgrp-row[data-state=running]:after{content:"";position:absolute;inset-block:0;left:0;width:300px;pointer-events:none;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-bg-base) 60%,transparent) 55%,transparent 100%);animation:tkcnt-sweep 2.6s ease-out infinite}',
 			".tkgrp-chevron{color:var(--dsw-alias-label-secondary);flex-shrink:0;width:14px;text-align:center;transition:transform .15s ease}",
 			".tkgrp-chevron[data-open]{transform:rotate(90deg)}",
@@ -393,7 +395,13 @@ window.__ModuleLoader__.load({
 				},
 				[],
 			);
-			if (run === null || !run.first) return null;
+			if (run === null) return null;
+			// Hidden members render a marker element; the :has() CSS rule below
+			// removes the whole flow wrapper from layout (flex gap included),
+			// independent of :empty support.
+			if (!run.first) {
+				return React.createElement("div", { className: "tkgrp-hidden", style: "display:none" });
+			}
 			var isOpen = expandedRuns.has(run.firstKey);
 			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
 			var children = [
