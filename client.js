@@ -298,13 +298,31 @@ window.__ModuleLoader__.load({
 
 		// ── Collapse tool calls ──
 
-		/** Per-group expansion state (keyed by the run's first node key). */
+		/**
+		 * Per-group expansion state, keyed by EVERY member node key of the run:
+		 * the chain's first node can shift (or two chains can merge) when new
+		 * tool calls stream in, and the expanded flag must survive that.
+		 */
 		var expandedRuns = new Set();
 		var expandListeners = new Set();
 
-		function toggleRun(firstKey) {
-			if (expandedRuns.has(firstKey)) expandedRuns.delete(firstKey);
-			else expandedRuns.add(firstKey);
+		function runOpen(run) {
+			if (run === null || run === undefined) return false;
+			if (expandedRuns.has(run.firstKey)) return true;
+			for (var i = 0; i < run.nodes.length; i++) {
+				if (expandedRuns.has(run.nodes[i].key)) return true;
+			}
+			return false;
+		}
+
+		function toggleRun(run) {
+			var open = runOpen(run);
+			for (var i = 0; i < run.nodes.length; i++) {
+				if (open) expandedRuns.delete(run.nodes[i].key);
+				else expandedRuns.add(run.nodes[i].key);
+			}
+			if (open) expandedRuns.delete(run.firstKey);
+			else expandedRuns.add(run.firstKey);
 			for (var fn of expandListeners) {
 				try {
 					fn();
@@ -519,7 +537,7 @@ window.__ModuleLoader__.load({
 
 		/** The collapsed/expanded group card for one tool-call chain. */
 		function GroupCard(props, run) {
-			var isOpen = expandedRuns.has(run.firstKey);
+			var isOpen = runOpen(run);
 			// Header: [Think duration & tokens, tool-call count]
 			var parts = [];
 			if (run.thinkTokens > 0) {
@@ -541,13 +559,13 @@ window.__ModuleLoader__.load({
 						title: isOpen ? "点击折叠" : "点击展开原始工具卡片",
 						onClick: function (e) {
 							e.stopPropagation();
-							toggleRun(run.firstKey);
+							toggleRun(run);
 						},
 						onKeyDown: function (e) {
 							if (e.key === "Enter" || e.key === " ") {
 								e.preventDefault();
 								e.stopPropagation();
-								toggleRun(run.firstKey);
+								toggleRun(run);
 							}
 						},
 					},
