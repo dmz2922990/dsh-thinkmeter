@@ -937,8 +937,9 @@ window.__ModuleLoader__.load({
 			return t;
 		}
 
-		/** Cached visible user-node summary, keyed by the nodes store identity. */
-		var userCache = { nodes: null, list: null };
+		/** Cached visible user-node summary: by nodes identity, or by content
+		 *  signature when the store Map is recreated on every snapshot. */
+		var userCache = { nodes: null, list: null, sig: null };
 
 		function userEntries(nodes) {
 			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return [];
@@ -953,7 +954,14 @@ window.__ModuleLoader__.load({
 			list.sort(function (a, b) {
 				return a.seq - b.seq;
 			});
-			userCache = { nodes: nodes, list: list };
+			var sig = list.map(function (x) {
+				return x.key + "|" + x.text.length;
+			}).join(",");
+			if (userCache.sig === sig && userCache.list !== null) {
+				userCache.nodes = nodes;
+				return userCache.list;
+			}
+			userCache = { nodes: nodes, list: list, sig: sig };
 			return list;
 		}
 
@@ -964,7 +972,10 @@ window.__ModuleLoader__.load({
 		 */
 		function MeasureDock(props) {
 			var useSession = props.useSession;
-			if (typeof useSession !== "function") return null;
+			if (typeof useSession !== "function") {
+				console.warn("[thinkmeter] MeasureDock: no useSession in dock props");
+				return null;
+			}
 			var users = useSession(function (snapshot) {
 				return userEntries(snapshot && snapshot.chat && snapshot.chat.nodes);
 			});
@@ -973,6 +984,7 @@ window.__ModuleLoader__.load({
 				function () {
 					var raf = 0;
 					var lastContainer = null;
+					var loggedEmpty = false;
 					function measure() {
 						if (raf !== 0) return;
 						raf = requestAnimationFrame(function () {
@@ -983,11 +995,16 @@ window.__ModuleLoader__.load({
 					function doMeasure() {
 						var container = document.querySelector("[data-conversation-scroll]");
 						if (container === null) {
+							if (!loggedEmpty) {
+								loggedEmpty = true;
+								console.warn("[thinkmeter] jump: [data-conversation-scroll] container not found");
+							}
 							jumpContainer = null;
 							jumpEntries = [];
 							notifyJump();
 							return;
 						}
+						loggedEmpty = false;
 						if (container !== lastContainer) {
 							if (lastContainer !== null) lastContainer.removeEventListener("scroll", measure);
 							container.addEventListener("scroll", measure, { passive: true });
@@ -1003,6 +1020,9 @@ window.__ModuleLoader__.load({
 							var top = r.top - cRect.top + container.scrollTop;
 							var pct = container.scrollHeight > 0 ? top / container.scrollHeight : 0;
 							list.push({ key: u.key, text: u.text, pct: Math.min(1, Math.max(0, pct)) });
+						}
+						if (list.length > 0 && jumpEntries.length === 0) {
+							console.log("[thinkmeter] jump rail active: " + list.length + " user markers");
 						}
 						jumpContainer = container;
 						jumpEntries = list;
