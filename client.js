@@ -980,11 +980,17 @@ window.__ModuleLoader__.load({
 				return userEntries(snapshot && snapshot.chat && snapshot.chat.nodes);
 			});
 			React.useState(false);
+			// usersRef lets the single mount-once effect read the latest list
+			// without re-running (and clearing) on every snapshot.
+			var usersRef = React.useRef(users);
+			usersRef.current = users;
+			var measureRef = React.useRef(null);
 			React.useEffect(
 				function () {
 					var raf = 0;
 					var lastContainer = null;
 					var loggedEmpty = false;
+					var lastSig = "";
 					function measure() {
 						if (raf !== 0) return;
 						raf = requestAnimationFrame(function () {
@@ -1010,10 +1016,12 @@ window.__ModuleLoader__.load({
 							container.addEventListener("scroll", measure, { passive: true });
 							lastContainer = container;
 						}
+						var usersNow = usersRef.current;
 						var cRect = container.getBoundingClientRect();
+						if (cRect.height <= 0) return;
 						var list = [];
-						for (var i = 0; i < users.length; i++) {
-							var u = users[i];
+						for (var i = 0; i < usersNow.length; i++) {
+							var u = usersNow[i];
 							var el = container.querySelector('[data-chat-anchor-key="' + u.key + '"]');
 							if (el === null) continue;
 							var r = el.getBoundingClientRect();
@@ -1021,6 +1029,13 @@ window.__ModuleLoader__.load({
 							var pct = container.scrollHeight > 0 ? top / container.scrollHeight : 0;
 							list.push({ key: u.key, text: u.text, pct: Math.min(1, Math.max(0, pct)) });
 						}
+						// Only notify when something materially changed (count or a
+						// marker moved >1%): avoids re-rendering the rail per frame.
+						var sig = list.length + "|" + list.map(function (x) {
+							return Math.round(x.pct * 100);
+						}).join(",");
+						if (sig === lastSig && jumpEntries.length === list.length) return;
+						lastSig = sig;
 						if (list.length > 0 && jumpEntries.length === 0) {
 							console.log("[thinkmeter] jump rail active: " + list.length + " user markers");
 						}
@@ -1028,6 +1043,7 @@ window.__ModuleLoader__.load({
 						jumpEntries = list;
 						notifyJump();
 					}
+					measureRef.current = measure;
 					measure();
 					function onExpand() {
 						measure();
@@ -1049,10 +1065,19 @@ window.__ModuleLoader__.load({
 						if (ro !== null) ro.disconnect();
 						if (lastContainer !== null) lastContainer.removeEventListener("scroll", measure);
 						if (raf !== 0) cancelAnimationFrame(raf);
-						jumpContainer = null;
-						jumpEntries = [];
-						notifyJump();
+						measureRef.current = null;
+						// Do NOT clear the store here: transient effect re-runs would
+						// flicker the rail. The store is replaced on the next measure.
 					};
+				},
+				[],
+			);
+			// Re-measure when the user-message list identity changes (new/other
+			// session, new message) without tearing the listeners down.
+			React.useEffect(
+				function () {
+					var m = measureRef.current;
+					if (m !== null) m();
 				},
 				[users],
 			);
@@ -1093,7 +1118,10 @@ window.__ModuleLoader__.load({
 			if (rect.height <= 0 || rect.width <= 0) return null;
 			var railTop = rect.top;
 			var railHeight = rect.height;
-			var railLeft = rect.right - 14;
+			// Sit clear of the browser scrollbar: its width is the difference
+			// between the container's offset and client widths.
+			var scrollbar = Math.max(0, jumpContainer.offsetWidth - jumpContainer.clientWidth);
+			var railLeft = rect.right - scrollbar - 14;
 			var dots = [];
 			var tip = null;
 			for (var i = 0; i < jumpEntries.length; i++) {
