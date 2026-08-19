@@ -623,31 +623,6 @@ window.__ModuleLoader__.load({
 					),
 				);
 			}
-			if (isOpen && run.count > 0) {
-				// Tool members delegate to the SHIPPED renderer (its toolview
-				// child slot goes through our registry-backed dispatch).
-				var shipped = findShippedToolComponent();
-				var kit = kitOf(propsSource);
-				for (var i = 0; i < run.nodes.length; i++) {
-					var n = run.nodes[i];
-					if (n.kind !== "tool-call") continue;
-					if (shipped !== null) {
-						var delegatedProps = Object.assign({}, propsSource, {
-							renderSlot: function (key, owner, opts) {
-								return dispatchSlot(key, owner, opts, kit);
-							},
-						});
-						children.push(
-							React.createElement(shipped, Object.assign({}, delegatedProps, { key: n.key, node: n })),
-						);
-					}
-				}
-				if (shipped === null && run.count > 0) {
-					children.push(
-						React.createElement("div", { key: "fallback", className: "tkgrp-summary" }, "(原始渲染器不可用)"),
-					);
-				}
-			}
 			// Per-block handling of the anchor step: text blocks are the visible
 			// divider; reasoning and tool-call blocks fold into disclosures.
 			if (hasReasoningText(anchor)) {
@@ -793,6 +768,33 @@ window.__ModuleLoader__.load({
 				}
 				for (var a = 0; a < answers.length; a++) {
 					children.push(answers[a]);
+				}
+			}
+			// Tool cards come AFTER the think fold and text, matching the
+			// chronological order (think -> tools).
+			if (isOpen && run.count > 0) {
+				// Tool members delegate to the SHIPPED renderer (its toolview
+				// child slot goes through our registry-backed dispatch).
+				var shipped = findShippedToolComponent();
+				var kit = kitOf(propsSource);
+				for (var i = 0; i < run.nodes.length; i++) {
+					var n = run.nodes[i];
+					if (n.kind !== "tool-call") continue;
+					if (shipped !== null) {
+						var delegatedProps = Object.assign({}, propsSource, {
+							renderSlot: function (key, owner, opts) {
+								return dispatchSlot(key, owner, opts, kit);
+							},
+						});
+						children.push(
+							React.createElement(shipped, Object.assign({}, delegatedProps, { key: n.key, node: n })),
+						);
+					}
+				}
+				if (shipped === null && run.count > 0) {
+					children.push(
+						React.createElement("div", { key: "fallback", className: "tkgrp-summary" }, "(原始渲染器不可用)"),
+					);
 				}
 			}
 			var rootClass = "tkgrp-root" + (run.count > 0 ? " tkgrp-card" : "");
