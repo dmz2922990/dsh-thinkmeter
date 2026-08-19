@@ -78,7 +78,9 @@ window.__ModuleLoader__.load({
 			".jk-dot:hover,.jk-dot-active{width:8px;height:8px;left:2px;background:var(--dsw-alias-label-secondary)}",
 			".jk-tip{position:fixed;pointer-events:none;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:6px 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);max-width:280px;box-shadow:var(--dsw-shadow-lv2);z-index:22}",
 			".jk-tip-text{white-space:normal;word-break:break-word;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}",
-			".tkgrp-thinkrow{padding-left:4px;min-height:24px}",
+			".tkgrp-thinkrow{padding-left:4px;min-height:24px;position:relative;overflow:hidden}",
+			".tkgrp-think[data-state=running] .tkgrp-thinkrow:after{content:'';position:absolute;inset-block:0;left:0;width:300px;pointer-events:none;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-bg-base) 60%,transparent) 55%,transparent 100%);animation:tkcnt-sweep 2.6s ease-out infinite}",
+			".tkgrp-think-summary{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:auto;display:inline-block;vertical-align:middle;padding-left:8px}",
 			".tkgrp-thinktitle{font-weight:400}",
 			".tkgrp-thinkchevron{color:var(--dsw-alias-label-secondary)}",
 			".tkgrp-outrow{display:flex;align-items:center;gap:6px;min-height:22px;font-size:12px;line-height:18px;cursor:pointer;user-select:none;color:var(--dsw-alias-label-caption);padding:4px 0 2px 4px}",
@@ -121,6 +123,17 @@ window.__ModuleLoader__.load({
 
 		function fmt(n) {
 			return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+		}
+
+		function firstLine(text) {
+			var newline = text.indexOf("\n");
+			return newline === -1 ? text : text.slice(0, newline);
+		}
+
+		function latestLine(text) {
+			var visible = text.trimEnd();
+			var newline = visible.lastIndexOf("\n");
+			return newline === -1 ? visible : visible.slice(newline + 1);
 		}
 
 		function fmtDuration(ms) {
@@ -649,6 +662,8 @@ window.__ModuleLoader__.load({
 				}
 				// Reasoning disclosure — the OFFICIAL think row (DisclosureRow +
 				// Think icon, same component family as the shipped ReasoningRow).
+				// While the step is running, the collapsed row streams the latest
+				// reasoning line with a sweep animation (shipped behavior).
 				if (outputs.length > 0) {
 					var thinkChildren = [];
 					for (var o = 0; o < outputs.length; o++) {
@@ -656,12 +671,15 @@ window.__ModuleLoader__.load({
 							React.createElement("div", { key: "out" + o, className: "tkgrp-out" }, outputs[o]),
 						);
 					}
+					var thinkRunning = anchorData !== undefined && anchorData !== null && anchorData.status === "running";
+					var thinkText = outputs[outputs.length - 1];
+					var summaryLine = thinkRunning ? latestLine(thinkText) : firstLine(thinkText);
 					var prims = getPrimitives();
 					if (prims !== null && prims.DisclosureRow !== undefined) {
 						children.push(
 							React.createElement(
 								"div",
-								{ key: "think", className: "tkgrp-think" },
+								{ key: "think", className: "tkgrp-think", "data-state": thinkRunning ? "running" : "ok" },
 								React.createElement(prims.DisclosureRow, {
 									rowClassName: "tkgrp-thinkrow",
 									leadingClassName: "tkgrp-thinkleading",
@@ -677,6 +695,10 @@ window.__ModuleLoader__.load({
 											return !v;
 										});
 									},
+									collapsedContent: React.createElement("span", {
+										className: "tkgrp-think-summary",
+										"data-follow-end": thinkRunning || undefined,
+									}, summaryLine),
 								}, thinkChildren),
 							),
 						);
