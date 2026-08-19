@@ -232,23 +232,62 @@ window.__ModuleLoader__.load({
 
 		// ── Collapse tool calls ──
 
-		/**
-		 * Global collapse state: while true (and the preference on), the tool-call
-		 * shadow is registered and groups render as count headers. Expanding
-		 * unregisters the shadow so the SHIPPED renderer shows original cards;
-		 * the dock chip re-registers it.
-		 */
-		var toolsCollapsed = true;
+		/** Per-group expansion state (keyed by the run's first node key). */
+		var expandedRuns = new Set();
 		var expandListeners = new Set();
 
-		function setToolsCollapsed(value) {
-			toolsCollapsed = value;
+		function toggleRun(firstKey) {
+			if (expandedRuns.has(firstKey)) expandedRuns.delete(firstKey);
+			else expandedRuns.add(firstKey);
 			for (var fn of expandListeners) {
 				try {
 					fn();
 				} catch (e) {}
 			}
-			notifyPref(); // syncShadow listens on the same channel
+		}
+
+		/** Slot service reference set in apply(); used for delegated slot dispatch. */
+		var slotsRef = null;
+
+		/**
+		 * Custom renderSlot for delegated rendering. The framework builds
+		 * per-entry renderSlot bindings only for entries that DECLARE their child
+		 * slots; our shadow cannot re-declare `tool.call.toolview` (already
+		 * declared by the shipped entry), so we dispatch the slot registry
+		 * ourselves: first matching keyed entry in priority order, else the
+		 * caller's fallback. Chosen entries that declare their own children get a
+		 * recursively scoped renderSlot of the same kind.
+		 */
+		function dispatchSlot(key, owner, opts, kit) {
+			var slots = slotsRef;
+			if (slots === null) return opts && opts.fallback !== undefined ? opts.fallback : null;
+			var entries = slots.entries(key);
+			var want = opts !== undefined && opts !== null ? opts.entryKey : undefined;
+			for (var i = 0; i < entries.length; i++) {
+				var e = entries[i];
+				if (e === undefined || e === null || e.component === undefined) continue;
+				if (want !== undefined && e.options !== undefined && e.options.key !== want) continue;
+				var childKit = Object.assign({}, kit, {
+					renderSlot: function (childKey, childOwner, childOpts) {
+						var declared = e.children !== undefined ? e.children[childKey] : undefined;
+						if (declared === undefined) {
+							throw new Error("renderSlot('" + childKey + "') is not declared by this entry's children");
+						}
+						return dispatchSlot(childKey, childOwner, childOpts, kit);
+					},
+				});
+				return React.createElement(e.component, Object.assign({}, childKit, owner));
+			}
+			return opts !== undefined && opts !== null && opts.fallback !== undefined ? opts.fallback : null;
+		}
+
+		/** Build the kit share (session standard props + locale) for delegation. */
+		function kitOf(props) {
+			var kit = {};
+			for (var name of ["useSession", "sessionId", "useProjection", "useSessions", "t"]) {
+				if (props[name] !== undefined) kit[name] = props[name];
+			}
+			return kit;
 		}
 
 		/** Cached sorted visible-node list, keyed by the nodes store identity. */
@@ -301,6 +340,28 @@ window.__ModuleLoader__.load({
 			return { first: true, firstKey: list[s0].key, count: e0 - s0 + 1, running: anyRunning, nodes: runNodes };
 		}
 
+		/** The shipped tool-call renderer shadowed by ours (same slot, priority 0). */
+		function findShippedToolComponent() {
+			var slots = slotsRef;
+			if (slots === null || typeof slots.entries !== "function") return null;
+			try {
+				var entries = slots.entries("conversation.chat.node");
+				for (var idx = 0; idx < entries.length; idx++) {
+					var e = entries[idx];
+					if (
+						e !== null &&
+						e !== undefined &&
+						e.options !== undefined &&
+						e.options.key === "tool-call" &&
+						e.component !== ToolGroupEntry
+					) {
+						return e.component;
+					}
+				}
+			} catch (err) {}
+			return null;
+		}
+
 		function ToolGroupEntry(props) {
 			var node = props.node;
 			var useSession = props.useSession;
@@ -311,39 +372,6 @@ window.__ModuleLoader__.load({
 			var run = useSession(function (snapshot) {
 				return toolRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
 			});
-			React.useState(false);
-			if (run === null || !run.first) return null;
-			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
-			// Expanding unregisters our shadow entirely, so the SHIPPED renderer
-			// takes over and the group shows the original tool cards.
-			return React.createElement(
-				"div",
-				{
-					className: "tkgrp-row",
-					"data-state": run.running ? "running" : "ok",
-					role: "button",
-					tabIndex: 0,
-					title: "点击展开原始工具卡片",
-					onClick: function (e) {
-						e.stopPropagation();
-						setToolsCollapsed(false);
-					},
-					onKeyDown: function (e) {
-						if (e.key === "Enter" || e.key === " ") {
-							e.preventDefault();
-							e.stopPropagation();
-							setToolsCollapsed(false);
-						}
-					},
-				},
-				React.createElement("span", { className: "tkgrp-chevron" }, "▸"),
-				React.createElement("span", { className: "tkgrp-title" }, "Tool calls"),
-				React.createElement("span", { className: "tkgrp-summary" }, header),
-			);
-		}
-
-		/** Re-collapse chip above the composer, visible while tools are expanded. */
-		function RecollapseDockRow() {
 			var state = React.useState(false);
 			var bump = state[1];
 			React.useEffect(
@@ -360,21 +388,61 @@ window.__ModuleLoader__.load({
 				},
 				[],
 			);
-			if (!readPref() || toolsCollapsed) return null;
-			return React.createElement(
-				"div",
-				{ className: "tkgrp-dock" },
+			if (run === null || !run.first) return null;
+			var isOpen = expandedRuns.has(run.firstKey);
+			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
+			var children = [
 				React.createElement(
-					"button",
+					"div",
 					{
-						className: "tkgrp-dock-btn",
-						onClick: function () {
-							setToolsCollapsed(true);
+						key: "head",
+						className: "tkgrp-row",
+						"data-state": run.running ? "running" : "ok",
+						role: "button",
+						tabIndex: 0,
+						title: isOpen ? "点击折叠" : "点击展开原始工具卡片",
+						onClick: function (e) {
+							e.stopPropagation();
+							toggleRun(run.firstKey);
+						},
+						onKeyDown: function (e) {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								e.stopPropagation();
+								toggleRun(run.firstKey);
+							}
 						},
 					},
-					"▸ 重新折叠工具调用",
+					React.createElement("span", { className: "tkgrp-chevron", "data-open": isOpen || undefined }, "▸"),
+					React.createElement("span", { className: "tkgrp-title" }, "Tool calls"),
+					React.createElement("span", { className: "tkgrp-summary" }, header),
 				),
-			);
+			];
+			if (isOpen) {
+				// Delegate each run node to the SHIPPED tool-call renderer. The
+				// shipped component dispatches its toolview child slot through
+				// props.renderSlot — a framework binding our entry cannot obtain
+				// (the child slot is already declared by the shipped entry), so we
+				// supply our own registry-backed dispatch with the same kit.
+				var shipped = findShippedToolComponent();
+				if (shipped !== null) {
+					var kit = kitOf(props);
+					var delegatedProps = Object.assign({}, props, {
+						renderSlot: function (key, owner, opts) {
+							return dispatchSlot(key, owner, opts, kit);
+						},
+					});
+					for (var i = 0; i < run.nodes.length; i++) {
+						var n = run.nodes[i];
+						children.push(React.createElement(shipped, Object.assign({}, delegatedProps, { key: n.key, node: n })));
+					}
+				} else {
+					children.push(
+						React.createElement("div", { key: "fallback", className: "tkgrp-summary" }, "(原始渲染器不可用)"),
+					);
+				}
+			}
+			return React.createElement("div", { className: "tkgrp-root" }, children);
 		}
 
 		function CollapseToolsSettingRow() {
@@ -389,7 +457,7 @@ window.__ModuleLoader__.load({
 					React.createElement(
 						"div",
 						{ className: "tkset-desc" },
-						"开启后，连续的工具调用折叠为分组框并显示数量；点击分组框展开为原始工具卡片，再用输入框上方的按钮重新折叠",
+						"开启后，连续的工具调用折叠为分组框并显示数量；点击分组框展开为原始工具卡片，再次点击折叠",
 					),
 				),
 				React.createElement(
@@ -410,6 +478,7 @@ window.__ModuleLoader__.load({
 		function apply(ctx) {
 			var slots = ctx.get("slots");
 			if (slots === undefined) return;
+			slotsRef = slots;
 			var disposeStyle = insertStyle();
 
 			// ThinkMeter: always-on shadow of the shipped assistant-step renderer.
@@ -426,25 +495,23 @@ window.__ModuleLoader__.load({
 				);
 			});
 
-			// Re-collapse chip above the composer (renders only while expanded).
-			var disposeDock = slots.inject("conversation.input.dock", function () {
-				return slots.register(
-					{ name: "conversation.input.dock", id: "thinkmeter-recollapse", order: 100, label: "重新折叠工具调用" },
-					RecollapseDockRow,
-				);
-			});
-
-			// Tool-call group shadow: registered only while the preference is on
-			// AND the user has not expanded; unregistering lets the shipped
-			// renderer show the ORIGINAL tool cards.
+			// Tool-call group shadow: registered only while the preference is on,
+			// so turning it off restores the shipped tool cards.
 			var shadowDisp = null;
 			function syncShadow() {
-				var want = readPref() && toolsCollapsed;
-				if (want && shadowDisp === null) {
+				if (readPref() && shadowDisp === null) {
 					shadowDisp = slots.inject("conversation.chat.node", function () {
-						return slots.register({ name: "conversation.chat.node", key: "tool-call", priority: -1 }, ToolGroupEntry);
+						return slots.register(
+							{
+								name: "conversation.chat.node",
+								key: "tool-call",
+								priority: -1,
+								locale: "conversation",
+							},
+							ToolGroupEntry,
+						);
 					});
-				} else if (!want && shadowDisp !== null) {
+				} else if (!readPref() && shadowDisp !== null) {
 					try {
 						shadowDisp();
 					} catch (e) {}
@@ -452,22 +519,17 @@ window.__ModuleLoader__.load({
 				}
 			}
 			prefListeners.add(syncShadow);
-			expandListeners.add(syncShadow);
 			syncShadow();
 
 			ctx.effect(function () {
 				return function () {
 					prefListeners.delete(syncShadow);
-					expandListeners.delete(syncShadow);
 					if (shadowDisp !== null) {
 						try {
 							shadowDisp();
 						} catch (e) {}
 						shadowDisp = null;
 					}
-					try {
-						disposeDock && disposeDock();
-					} catch (e) {}
 					try {
 						disposeSettings && disposeSettings();
 					} catch (e) {}
@@ -477,6 +539,7 @@ window.__ModuleLoader__.load({
 					try {
 						disposeStyle();
 					} catch (e) {}
+					slotsRef = null;
 				};
 			});
 		}
