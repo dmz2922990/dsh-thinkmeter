@@ -559,16 +559,20 @@ window.__ModuleLoader__.load({
 
 		/**
 		 * One round: collapsed card (Think summary + tool count) on top; the
-		 * think OUTPUT text folds into a slim disclosure below (collapsed by
-		 * default); the final answer step's text renders after it.
+		 * anchor step's text blocks are the always-visible divider, while its
+		 * reasoning and tool-call blocks fold into disclosures (official
+		 * components inside).
 		 */
 		function RoundView(props) {
 			var run = props.run;
 			var propsSource = props.props;
-			// Think output disclosure, collapsed by default.
+			// Disclosures, collapsed by default.
 			var thinkState = React.useState(false);
 			var thinkOpen = thinkState[0];
 			var setThinkOpen = thinkState[1];
+			var toolState = React.useState(false);
+			var toolBlocksOpen = toolState[0];
+			var setToolBlocksOpen = toolState[1];
 			var isOpen = runOpen(run);
 			var anchor = run.nodes[0];
 			var anchorData = anchor !== undefined && anchor !== null ? anchor.data : undefined;
@@ -633,11 +637,13 @@ window.__ModuleLoader__.load({
 					);
 				}
 			}
-			// Think output disclosure (folded by default) + answer text.
+			// Per-block handling of the anchor step: text blocks are the visible
+			// divider; reasoning and tool-call blocks fold into disclosures.
 			if (hasReasoningText(anchor)) {
 				var blocks = Array.isArray(anchorData !== undefined && anchorData !== null ? anchorData.blocks : []) ? anchorData.blocks : [];
 				var outputs = [];
 				var answers = [];
+				var toolBlocks = [];
 				for (var b = 0; b < blocks.length; b++) {
 					var block = blocks[b];
 					if (block === undefined || block === null) continue;
@@ -646,8 +652,11 @@ window.__ModuleLoader__.load({
 					} else if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
 						var answer = renderTextBlock("ans" + b, block.text.replace(/^\n+/, ""), false);
 						if (answer !== null) answers.push(answer);
+					} else if (block.kind === "tool-call") {
+						toolBlocks.push(block);
 					}
 				}
+				// Reasoning disclosure (official-style think text inside).
 				if (outputs.length > 0) {
 					var thinkChildren = [];
 					for (var o = 0; o < outputs.length; o++) {
@@ -686,6 +695,61 @@ window.__ModuleLoader__.load({
 								React.createElement("span", { className: "tkgrp-outlabel" }, "思考输出"),
 							),
 							thinkOpen ? thinkChildren : null,
+						),
+					);
+				}
+				// Tool-call block disclosure: only when the round has no separate
+				// tool nodes (those already render official cards on expansion),
+				// to avoid double-drawing the same calls.
+				if (toolBlocks.length > 0 && run.count === 0) {
+					var toolBlockEls = [];
+					var shippedBlocks = findShippedToolComponent();
+					var kitBlocks = kitOf(propsSource);
+					for (var tb = 0; tb < toolBlocks.length; tb++) {
+						var block2 = toolBlocks[tb];
+						if (shippedBlocks !== null) {
+							var delegatedProps2 = Object.assign({}, propsSource, {
+								node: { data: { root: block2 } },
+								renderSlot: function (key, owner, opts) {
+									return dispatchSlot(key, owner, opts, kitBlocks);
+								},
+							});
+							toolBlockEls.push(
+								React.createElement(shippedBlocks, Object.assign({}, delegatedProps2, { key: "tb" + tb })),
+							);
+						}
+					}
+					children.push(
+						React.createElement(
+							"div",
+							{ key: "toolblocks", className: "tkgrp-think" },
+							React.createElement(
+								"div",
+								{
+									className: "tkgrp-outrow",
+									role: "button",
+									tabIndex: 0,
+									title: toolBlocksOpen ? "收起工具调用" : "展开工具调用",
+									onClick: function (e) {
+										e.stopPropagation();
+										setToolBlocksOpen(function (v) {
+											return !v;
+										});
+									},
+									onKeyDown: function (e) {
+										if (e.key === "Enter" || e.key === " ") {
+											e.preventDefault();
+											e.stopPropagation();
+											setToolBlocksOpen(function (v) {
+												return !v;
+											});
+										}
+									},
+								},
+								React.createElement("span", { className: "tkgrp-chevron", "data-open": toolBlocksOpen || undefined }, "▸"),
+								React.createElement("span", { className: "tkgrp-outlabel" }, "工具调用 (" + toolBlocks.length + ")"),
+							),
+							toolBlocksOpen ? toolBlockEls : null,
 						),
 					);
 				}
