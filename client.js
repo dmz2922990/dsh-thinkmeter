@@ -400,7 +400,7 @@ window.__ModuleLoader__.load({
 			// removes the whole flow wrapper from layout (flex gap included),
 			// independent of :empty support.
 			if (!run.first) {
-				return React.createElement("div", { className: "tkgrp-hidden", style: "display:none" });
+				return React.createElement("div", { className: "tkgrp-hidden", style: { display: "none" } });
 			}
 			var isOpen = expandedRuns.has(run.firstKey);
 			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
