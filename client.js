@@ -70,9 +70,6 @@ window.__ModuleLoader__.load({
 			".tkgrp-dock{display:flex;justify-content:center;padding:2px 0}",
 			".tkgrp-dock-btn{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);border:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:20px;padding:2px 10px}",
 			".tkgrp-dock-btn:hover{color:var(--dsw-alias-label-primary)}",
-			".tkgrp-thinkblock{display:flex;flex-direction:column;padding:2px 0}",
-			".tkgrp-thinklabel{color:var(--dsw-alias-label-caption);font-size:11px;line-height:18px;font-variant-numeric:tabular-nums;margin-bottom:2px}",
-			".tkgrp-thinkbody{color:var(--dsw-alias-label-tertiary);white-space:pre-wrap;word-break:break-word;padding:0 0 6px 22px;font-size:14px;line-height:24px}",
 			"@media (prefers-reduced-motion:reduce){.tkgrp-row[data-state=running]:after{animation:none}}",
 		].join("\n");
 
@@ -579,7 +576,7 @@ window.__ModuleLoader__.load({
 							);
 						}
 					} else {
-						children.push(React.createElement(GroupThinkBlock, { key: n.key, node: n }));
+						children.push(React.createElement(AssistantStep, { key: n.key, node: n }));
 					}
 				}
 				if (shipped === null && run.count > 0) {
@@ -630,41 +627,6 @@ window.__ModuleLoader__.load({
 			// lone issuing step (tools not yet materialized) stays a think card.
 			if (run.count === 0) return AssistantStep(props);
 			return GroupCard(props, run);
-		}
-
-		/**
-		 * Slim per-round think rendering inside an expanded group: a small
-		 * duration label plus the reasoning text, WITHOUT the redundant
-		 * token-count header card (the group header already aggregates it).
-		 */
-		function GroupThinkBlock(props) {
-			var data = props.node && props.node.data;
-			if (data === undefined || data === null) return null;
-			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
-			var duration = fmtDuration(thinkMsOf(data));
-			var label = "Think" + (duration !== "" ? " · " + duration : "");
-			var children = [];
-			for (var i = 0; i < blocks.length; i++) {
-				var block = blocks[i];
-				if (block === undefined || block === null) continue;
-				if (block.kind === "reasoning" && typeof block.text === "string" && block.text.trim() !== "") {
-					children.push(
-						React.createElement(
-							"div",
-							{ key: "r" + i, className: "tkgrp-thinkbody" },
-							block.text.replace(/^\n+/, ""),
-						),
-					);
-				} else if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
-					var el = renderTextBlock("t" + i, block.text.replace(/^\n+/, ""), false);
-					if (el !== null) children.push(el);
-				}
-			}
-			if (children.length === 0) return null;
-			children.unshift(
-				React.createElement("div", { key: "label", className: "tkgrp-thinklabel" }, label),
-			);
-			return React.createElement("div", { className: "tkgrp-thinkblock" }, children);
 		}
 
 		/** Generic preference toggle row. */
