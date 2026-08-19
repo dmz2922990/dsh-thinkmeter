@@ -73,6 +73,11 @@ window.__ModuleLoader__.load({
 			".tkgrp-dock-btn{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);border:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:20px;padding:2px 10px}",
 			".tkgrp-dock-btn:hover{color:var(--dsw-alias-label-primary)}",
 			".tkgrp-out{color:var(--dsw-alias-label-tertiary);white-space:pre-wrap;word-break:break-word;padding:2px 0 4px 22px;font-size:14px;line-height:24px}",
+			".jk-rail{position:fixed;width:12px;pointer-events:auto;z-index:21}",
+			".jk-dot{position:absolute;left:3px;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-caption);cursor:pointer;transform:translateY(-50%);transition:width .12s ease,height .12s ease,background .12s ease}",
+			".jk-dot:hover,.jk-dot-active{width:8px;height:8px;left:2px;background:var(--dsw-alias-label-secondary)}",
+			".jk-tip{position:fixed;pointer-events:none;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:6px 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);max-width:280px;box-shadow:var(--dsw-shadow-lv2);z-index:22}",
+			".jk-tip-text{white-space:normal;word-break:break-word;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}",
 			".tkgrp-thinkrow{padding-left:4px;min-height:24px}",
 			".tkgrp-thinktitle{font-weight:400}",
 			".tkgrp-thinkchevron{color:var(--dsw-alias-label-secondary)}",
@@ -855,6 +860,219 @@ window.__ModuleLoader__.load({
 			"开启后，连续的工具调用折叠为分组框并显示数量；点击分组框展开为原始工具卡片，再次点击折叠",
 		);
 
+		// ── Session quick-jump rail ──
+
+		/** Pure-data store shared by the measure dock and the overlay rail. */
+		var jumpEntries = [];
+		var jumpContainer = null;
+		var jumpListeners = new Set();
+
+		function notifyJump() {
+			for (var fn of [...jumpListeners]) {
+				try {
+					fn();
+				} catch (e) {}
+			}
+		}
+
+		/** Extract prompt text from one user node (text content blocks only). */
+		function userTextOf(data) {
+			if (data === undefined || data === null) return "";
+			var content = Array.isArray(data.content) ? data.content : [];
+			var parts = [];
+			for (var i = 0; i < content.length; i++) {
+				var c = content[i];
+				if (c !== undefined && c !== null && typeof c.text === "string" && c.text.trim() !== "") {
+					parts.push(c.text.replace(/^\n+/, ""));
+				}
+			}
+			var t = parts.join("\n").replace(/\s+/g, " ").trim();
+			if (t.length > 200) t = t.slice(0, 200) + "…";
+			return t;
+		}
+
+		/** Cached visible user-node summary, keyed by the nodes store identity. */
+		var userCache = { nodes: null, list: null };
+
+		function userEntries(nodes) {
+			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return [];
+			if (userCache.nodes === nodes && userCache.list !== null) return userCache.list;
+			var list = [];
+			for (var n of nodes.values()) {
+				if (n === undefined || n === null) continue;
+				if (n.kind !== "user" || n.visibility !== "visible") continue;
+				var seq = n.data !== undefined && n.data !== null && typeof n.data.seq === "number" ? n.data.seq : n.anchorSeq;
+				list.push({ key: n.key, seq: seq, text: userTextOf(n.data) });
+			}
+			list.sort(function (a, b) {
+				return a.seq - b.seq;
+			});
+			userCache = { nodes: nodes, list: list };
+			return list;
+		}
+
+		/**
+		 * Session-scope measurer (renders nothing): watches the scroll
+		 * container and writes each user message's normalized position into
+		 * the jump store.
+		 */
+		function MeasureDock(props) {
+			var useSession = props.useSession;
+			if (typeof useSession !== "function") return null;
+			var users = useSession(function (snapshot) {
+				return userEntries(snapshot && snapshot.chat && snapshot.chat.nodes);
+			});
+			React.useState(false);
+			React.useEffect(
+				function () {
+					var raf = 0;
+					var lastContainer = null;
+					function measure() {
+						if (raf !== 0) return;
+						raf = requestAnimationFrame(function () {
+							raf = 0;
+							doMeasure();
+						});
+					}
+					function doMeasure() {
+						var container = document.querySelector("[data-conversation-scroll]");
+						if (container === null) {
+							jumpContainer = null;
+							jumpEntries = [];
+							notifyJump();
+							return;
+						}
+						if (container !== lastContainer) {
+							if (lastContainer !== null) lastContainer.removeEventListener("scroll", measure);
+							container.addEventListener("scroll", measure, { passive: true });
+							lastContainer = container;
+						}
+						var cRect = container.getBoundingClientRect();
+						var list = [];
+						for (var i = 0; i < users.length; i++) {
+							var u = users[i];
+							var el = container.querySelector('[data-chat-anchor-key="' + u.key + '"]');
+							if (el === null) continue;
+							var r = el.getBoundingClientRect();
+							var top = r.top - cRect.top + container.scrollTop;
+							var pct = container.scrollHeight > 0 ? top / container.scrollHeight : 0;
+							list.push({ key: u.key, text: u.text, pct: Math.min(1, Math.max(0, pct)) });
+						}
+						jumpContainer = container;
+						jumpEntries = list;
+						notifyJump();
+					}
+					measure();
+					function onExpand() {
+						measure();
+					}
+					expandListeners.add(onExpand);
+					var onResize = measure;
+					window.addEventListener("resize", onResize);
+					var ro = null;
+					if (typeof ResizeObserver !== "undefined") {
+						ro = new ResizeObserver(function () {
+							measure();
+						});
+						var c0 = document.querySelector("[data-conversation-scroll]");
+						if (c0 !== null) ro.observe(c0);
+					}
+					return function () {
+						expandListeners.delete(onExpand);
+						window.removeEventListener("resize", onResize);
+						if (ro !== null) ro.disconnect();
+						if (lastContainer !== null) lastContainer.removeEventListener("scroll", measure);
+						if (raf !== 0) cancelAnimationFrame(raf);
+						jumpContainer = null;
+						jumpEntries = [];
+						notifyJump();
+					};
+				},
+				[users],
+			);
+			return null;
+		}
+
+		/** Root-scope overlay rail: dots for every user message, tip on hover, jump on click. */
+		function JumpRail() {
+			React.useState(false);
+			var hoverState = React.useState(-1);
+			var hoverIdx = hoverState[0];
+			var setHoverIdx = hoverState[1];
+			React.useEffect(
+				function () {
+					var fn = function () {
+						setHoverIdx(-1);
+					};
+					jumpListeners.add(fn);
+					var raf = 0;
+					var onResize = function () {
+						if (raf !== 0) return;
+						raf = requestAnimationFrame(function () {
+							raf = 0;
+							fn();
+						});
+					};
+					window.addEventListener("resize", onResize);
+					return function () {
+						jumpListeners.delete(fn);
+						window.removeEventListener("resize", onResize);
+						if (raf !== 0) cancelAnimationFrame(raf);
+					};
+				},
+				[],
+			);
+			if (jumpEntries.length === 0 || jumpContainer === null) return null;
+			var rect = jumpContainer.getBoundingClientRect();
+			if (rect.height <= 0 || rect.width <= 0) return null;
+			var railTop = rect.top;
+			var railHeight = rect.height;
+			var railLeft = rect.right - 14;
+			var dots = [];
+			var tip = null;
+			for (var i = 0; i < jumpEntries.length; i++) {
+				var entry = jumpEntries[i];
+				var top = railTop + entry.pct * (railHeight - 10);
+				dots.push(
+					React.createElement("div", {
+						key: entry.key,
+						className: "jk-dot" + (i === hoverIdx ? " jk-dot-active" : ""),
+						style: { top: top },
+						title: "",
+						onMouseEnter: function (idx) {
+							return function () {
+								setHoverIdx(idx);
+							};
+						}(i),
+						onMouseLeave: function () {
+							setHoverIdx(-1);
+						},
+						onClick: function (key) {
+							return function () {
+								var el = document.querySelector('[data-chat-anchor-key="' + key + '"]');
+								if (el !== null && typeof el.scrollIntoView === "function") {
+									el.scrollIntoView({ behavior: "smooth", block: "start" });
+								}
+							};
+						}(entry.key),
+					}),
+				);
+				if (i === hoverIdx) {
+					tip = React.createElement(
+						"div",
+						{ className: "jk-tip", style: { top: top - 8, left: railLeft - 296 } },
+						React.createElement("div", { className: "jk-tip-text" }, entry.text || "(空)"),
+					);
+				}
+			}
+			return React.createElement(
+				"div",
+				{ className: "jk-rail", style: { top: railTop, left: railLeft, height: railHeight } },
+				dots,
+				tip,
+			);
+		}
+
 
 		function apply(ctx) {
 			var slots = ctx.get("slots");
@@ -907,6 +1125,20 @@ window.__ModuleLoader__.load({
 			prefListeners.add(syncShadow);
 			syncShadow();
 
+			// Quick-jump rail: measure dock (session scope) + overlay rail.
+			var disposeJumpDock = slots.inject("conversation.input.dock", function () {
+				return slots.register(
+					{ name: "conversation.input.dock", id: "thinkmeter-jump-measure", order: 200, label: "跳转测量" },
+					MeasureDock,
+				);
+			});
+			var disposeJumpRail = slots.inject("shell.overlay", function () {
+				return slots.register(
+					{ name: "shell.overlay", id: "thinkmeter-jump-rail", order: 200, label: "用户输入跳转条" },
+					JumpRail,
+				);
+			});
+
 			ctx.effect(function () {
 				return function () {
 					prefListeners.delete(syncShadow);
@@ -916,6 +1148,12 @@ window.__ModuleLoader__.load({
 						} catch (e) {}
 						shadowDisp = null;
 					}
+					try {
+						disposeJumpDock && disposeJumpDock();
+					} catch (e) {}
+					try {
+						disposeJumpRail && disposeJumpRail();
+					} catch (e) {}
 					try {
 						disposeSettings && disposeSettings();
 					} catch (e) {}
