@@ -1008,6 +1008,13 @@ window.__ModuleLoader__.load({
 						}, 120);
 					}
 					function doMeasure() {
+						try {
+							measureInner();
+						} catch (e) {
+							console.error("[thinkmeter] jump measure error:", e);
+						}
+					}
+					function measureInner() {
 						var container = document.querySelector("[data-conversation-scroll]");
 						if (container === null) {
 							if (!loggedEmpty) {
@@ -1017,7 +1024,6 @@ window.__ModuleLoader__.load({
 							jumpContainer = null;
 							jumpEntries = [];
 							notifyJump();
-							retries = 0;
 							retry();
 							return;
 						}
@@ -1071,6 +1077,10 @@ window.__ModuleLoader__.load({
 					}
 					measureRef.current = measure;
 					measure();
+					// Self-healing: refresh periodically in case an event was missed.
+					var refresh = setInterval(function () {
+						measure();
+					}, 2000);
 					function onExpand() {
 						measure();
 					}
@@ -1088,6 +1098,7 @@ window.__ModuleLoader__.load({
 					return function () {
 						expandListeners.delete(onExpand);
 						window.removeEventListener("resize", onResize);
+						clearInterval(refresh);
 						if (retryTimer !== 0) {
 							clearTimeout(retryTimer);
 							retryTimer = 0;
