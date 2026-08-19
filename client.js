@@ -229,12 +229,14 @@ window.__ModuleLoader__.load({
 
 		// ── Collapse tool calls ──
 
-		/**
-		 * Compute the consecutive visible tool-call run around `selfKey`.
-		 * Returns the run's live node references for delegated rendering.
-		 */
-		function toolRunOf(nodes, selfKey) {
-			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return null;
+		/** Expansion state per group (keyed by the run's first node key), surviving remounts. */
+		var expandedRuns = new Set();
+
+		/** Cached sorted visible-node list, keyed by the nodes store identity. */
+		var runCache = { nodes: null, sorted: null };
+
+		function sortedVisible(nodes) {
+			if (runCache.nodes === nodes && runCache.sorted !== null) return runCache.sorted;
 			var list = [];
 			for (var n of nodes.values()) {
 				if (n === undefined || n === null) continue;
@@ -244,6 +246,17 @@ window.__ModuleLoader__.load({
 			list.sort(function (a, b) {
 				return a.anchorSeq - b.anchorSeq || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 			});
+			runCache = { nodes: nodes, sorted: list };
+			return list;
+		}
+
+		/**
+		 * Compute the consecutive visible tool-call run around `selfKey`.
+		 * Returns the run's live node references for delegated rendering.
+		 */
+		function toolRunOf(nodes, selfKey) {
+			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return null;
+			var list = sortedVisible(nodes);
 			var i = -1;
 			for (var j = 0; j < list.length; j++) {
 				if (list[j].key === selfKey) {
@@ -266,7 +279,7 @@ window.__ModuleLoader__.load({
 				if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
 				runNodes.push(nd);
 			}
-			return { first: true, count: e0 - s0 + 1, running: anyRunning, nodes: runNodes };
+			return { first: true, firstKey: list[s0].key, count: e0 - s0 + 1, running: anyRunning, nodes: runNodes };
 		}
 
 		/** Slot service reference set in apply(); used to find the shadowed shipped renderer. */
@@ -302,9 +315,17 @@ window.__ModuleLoader__.load({
 				return toolRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
 			});
 			if (run === null || !run.first) return null;
-			var state = React.useState(false);
+			// Expansion lives in the module-level set so it survives remounts and
+			// snapshot churn; local state only mirrors it for re-rendering.
+			var state = React.useState(expandedRuns.has(run.firstKey));
 			var isOpen = state[0];
 			var setOpen = state[1];
+			function toggle() {
+				var next = !expandedRuns.has(run.firstKey);
+				if (next) expandedRuns.add(run.firstKey);
+				else expandedRuns.delete(run.firstKey);
+				setOpen(next);
+			}
 			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
 			var children = [
 				React.createElement(
@@ -315,17 +336,15 @@ window.__ModuleLoader__.load({
 						"data-state": run.running ? "running" : "ok",
 						role: "button",
 						tabIndex: 0,
-						onClick: function () {
-							setOpen(function (v) {
-								return !v;
-							});
+						onClick: function (e) {
+							e.stopPropagation();
+							toggle();
 						},
 						onKeyDown: function (e) {
 							if (e.key === "Enter" || e.key === " ") {
 								e.preventDefault();
-								setOpen(function (v) {
-									return !v;
-								});
+								e.stopPropagation();
+								toggle();
 							}
 						},
 					},
