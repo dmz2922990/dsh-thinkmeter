@@ -490,11 +490,13 @@ window.__ModuleLoader__.load({
 				},
 				[],
 			);
-			// Outside grouping (feature off, or an assistant step with visible
-			// text): fall back to the normal single-node rendering.
-			if (!readPref() || run === null || !run.first) {
+			// Feature off, or a node outside every group (e.g. an assistant step
+			// with visible text): render normally. A grouped non-first node is
+			// rendered by the group's first node and hides itself here.
+			if (!readPref() || run === null) {
 				return fallbackNodeRender(props, node);
 			}
+			if (!run.first) return null;
 			var isOpen = expandedRuns.has(run.firstKey);
 			// Header: [Think duration & tokens, tool-call count]
 			var parts = [];
