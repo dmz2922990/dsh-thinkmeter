@@ -71,6 +71,9 @@ window.__ModuleLoader__.load({
 			".tkgrp-dock-btn{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);border:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:20px;padding:2px 10px}",
 			".tkgrp-dock-btn:hover{color:var(--dsw-alias-label-primary)}",
 			".tkgrp-out{color:var(--dsw-alias-label-tertiary);white-space:pre-wrap;word-break:break-word;padding:2px 0 4px 22px;font-size:14px;line-height:24px}",
+			".tkgrp-thinkrow{padding-left:4px;min-height:24px}",
+			".tkgrp-thinktitle{font-weight:400}",
+			".tkgrp-thinkchevron{color:var(--dsw-alias-label-secondary)}",
 			".tkgrp-outrow{display:flex;align-items:center;gap:6px;min-height:22px;font-size:12px;line-height:18px;cursor:pointer;user-select:none;color:var(--dsw-alias-label-caption);padding:4px 0 2px 4px}",
 			".tkgrp-outlabel{font-variant-numeric:tabular-nums}",
 			"@media (prefers-reduced-motion:reduce){.tkgrp-row[data-state=running]:after{animation:none}}",
@@ -656,7 +659,8 @@ window.__ModuleLoader__.load({
 						toolBlocks.push(block);
 					}
 				}
-				// Reasoning disclosure (official-style think text inside).
+				// Reasoning disclosure — the OFFICIAL think row (DisclosureRow +
+				// Think icon, same component family as the shipped ReasoningRow).
 				if (outputs.length > 0) {
 					var thinkChildren = [];
 					for (var o = 0; o < outputs.length; o++) {
@@ -664,39 +668,65 @@ window.__ModuleLoader__.load({
 							React.createElement("div", { key: "out" + o, className: "tkgrp-out" }, outputs[o]),
 						);
 					}
-					children.push(
-						React.createElement(
-							"div",
-							{ key: "think", className: "tkgrp-think" },
+					var prims = getPrimitives();
+					if (prims !== null && prims.DisclosureRow !== undefined) {
+						children.push(
 							React.createElement(
 								"div",
-								{
-									className: "tkgrp-outrow",
-									role: "button",
-									tabIndex: 0,
-									title: thinkOpen ? "收起思考输出" : "展开思考输出",
-									onClick: function (e) {
-										e.stopPropagation();
+								{ key: "think", className: "tkgrp-think" },
+								React.createElement(prims.DisclosureRow, {
+									rowClassName: "tkgrp-thinkrow",
+									leadingClassName: "tkgrp-thinkleading",
+									titleClassName: "tkgrp-thinktitle",
+									chevronClassName: "tkgrp-thinkchevron",
+									icon: React.createElement(prims.IconThinkOutline14, { size: 14 }),
+									title: "Think",
+									open: thinkOpen,
+									expandable: true,
+									expandOnRowClick: true,
+									onToggle: function () {
 										setThinkOpen(function (v) {
 											return !v;
 										});
 									},
-									onKeyDown: function (e) {
-										if (e.key === "Enter" || e.key === " ") {
-											e.preventDefault();
+								}, thinkChildren),
+							),
+						);
+					} else {
+						children.push(
+							React.createElement(
+								"div",
+								{ key: "think", className: "tkgrp-think" },
+								React.createElement(
+									"div",
+									{
+										className: "tkgrp-outrow",
+										role: "button",
+										tabIndex: 0,
+										title: thinkOpen ? "收起思考输出" : "展开思考输出",
+										onClick: function (e) {
 											e.stopPropagation();
 											setThinkOpen(function (v) {
 												return !v;
 											});
-										}
+										},
+										onKeyDown: function (e) {
+											if (e.key === "Enter" || e.key === " ") {
+												e.preventDefault();
+												e.stopPropagation();
+												setThinkOpen(function (v) {
+													return !v;
+												});
+											}
+										},
 									},
-								},
-								React.createElement("span", { className: "tkgrp-chevron", "data-open": thinkOpen || undefined }, "▸"),
-								React.createElement("span", { className: "tkgrp-outlabel" }, "思考输出"),
+									React.createElement("span", { className: "tkgrp-chevron", "data-open": thinkOpen || undefined }, "▸"),
+									React.createElement("span", { className: "tkgrp-outlabel" }, "思考输出"),
+								),
+								thinkOpen ? thinkChildren : null,
 							),
-							thinkOpen ? thinkChildren : null,
-						),
-					);
+						);
+					}
 				}
 				// Tool-call block disclosure: only when the round has no separate
 				// tool nodes (those already render official cards on expansion),
