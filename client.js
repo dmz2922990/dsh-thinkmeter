@@ -991,12 +991,21 @@ window.__ModuleLoader__.load({
 					var lastContainer = null;
 					var loggedEmpty = false;
 					var lastSig = "";
+					var retryTimer = 0;
+					var retries = 0;
 					function measure() {
 						if (raf !== 0) return;
 						raf = requestAnimationFrame(function () {
 							raf = 0;
 							doMeasure();
 						});
+					}
+					function retry() {
+						if (retryTimer !== 0) return;
+						retryTimer = setTimeout(function () {
+							retryTimer = 0;
+							measure();
+						}, 120);
 					}
 					function doMeasure() {
 						var container = document.querySelector("[data-conversation-scroll]");
@@ -1008,6 +1017,8 @@ window.__ModuleLoader__.load({
 							jumpContainer = null;
 							jumpEntries = [];
 							notifyJump();
+							retries = 0;
+							retry();
 							return;
 						}
 						loggedEmpty = false;
@@ -1015,10 +1026,25 @@ window.__ModuleLoader__.load({
 							if (lastContainer !== null) lastContainer.removeEventListener("scroll", measure);
 							container.addEventListener("scroll", measure, { passive: true });
 							lastContainer = container;
+							// Watch the newly-resolved container for size changes too.
+							if (typeof ResizeObserver !== "undefined" && ro !== null) {
+								try {
+									ro.observe(container);
+								} catch (e) {}
+							}
 						}
 						var usersNow = usersRef.current;
 						var cRect = container.getBoundingClientRect();
-						if (cRect.height <= 0) return;
+						if (cRect.height <= 0) {
+							// New session's container is not laid out yet: retry a
+							// few times instead of silently keeping stale data.
+							if (retries < 30) {
+								retries++;
+								retry();
+							}
+							return;
+						}
+						retries = 0;
 						var list = [];
 						for (var i = 0; i < usersNow.length; i++) {
 							var u = usersNow[i];
@@ -1062,6 +1088,10 @@ window.__ModuleLoader__.load({
 					return function () {
 						expandListeners.delete(onExpand);
 						window.removeEventListener("resize", onResize);
+						if (retryTimer !== 0) {
+							clearTimeout(retryTimer);
+							retryTimer = 0;
+						}
 						if (ro !== null) ro.disconnect();
 						if (lastContainer !== null) lastContainer.removeEventListener("scroll", measure);
 						if (raf !== 0) cancelAnimationFrame(raf);
