@@ -140,19 +140,6 @@ window.__ModuleLoader__.load({
 		}
 
 
-		// ── markdown preference (default ON) ──
-
-		var MD_KEY = "dsh-thinkmeter:markdown";
-
-		function readMd() {
-			try {
-				if (typeof localStorage === "undefined") return true;
-				return localStorage.getItem(MD_KEY) !== "0";
-			} catch (e) {
-				return true;
-			}
-		}
-
 		function writeMd(value) {
 			try {
 				if (typeof localStorage !== "undefined") localStorage.setItem(MD_KEY, value ? "1" : "0");
@@ -182,17 +169,16 @@ window.__ModuleLoader__.load({
 
 		/** Render one assistant text block: official Markdown, or plain text. */
 		function renderTextBlock(key, text, streaming) {
-			if (readMd()) {
-				var prims = getPrimitives();
-				if (prims !== null && prims.MarkdownText !== undefined) {
-					return React.createElement(prims.MarkdownText, {
-						key: key,
-						text: text,
-						streaming: streaming,
-						codeLabels: CODE_LABELS,
-					});
-				}
+			var prims = getPrimitives();
+			if (prims !== null && prims.MarkdownText !== undefined) {
+				return React.createElement(prims.MarkdownText, {
+					key: key,
+					text: text,
+					streaming: streaming,
+					codeLabels: CODE_LABELS,
+				});
 			}
+			// Fallback while/if the primitives bundle is unavailable.
 			return React.createElement("div", { key: key, className: "tkcnt-text" }, text);
 		}
 
@@ -629,12 +615,6 @@ window.__ModuleLoader__.load({
 			"开启后，连续的工具调用折叠为分组框并显示数量；点击分组框展开为原始工具卡片，再次点击折叠",
 		);
 
-		var MarkdownSettingRow = makeToggleRow(
-			readMd,
-			writeMd,
-			"Markdown 渲染",
-			"开启后，回复文本按 Markdown 格式渲染（标题、列表、代码块等）；关闭则显示纯文本",
-		);
 
 		function apply(ctx) {
 			var slots = ctx.get("slots");
@@ -658,12 +638,6 @@ window.__ModuleLoader__.load({
 				return slots.register(
 					{ name: "settings.general.item", id: "thinkmeter-collapse-tools", order: 100, label: "折叠工具调用" },
 					CollapseToolsSettingRow,
-				);
-			});
-			var disposeSettingsMd = slots.inject("settings.general.item", function () {
-				return slots.register(
-					{ name: "settings.general.item", id: "thinkmeter-markdown", order: 101, label: "Markdown 渲染" },
-					MarkdownSettingRow,
 				);
 			});
 
@@ -704,9 +678,6 @@ window.__ModuleLoader__.load({
 					}
 					try {
 						disposeSettings && disposeSettings();
-					} catch (e) {}
-					try {
-						disposeSettingsMd && disposeSettingsMd();
 					} catch (e) {}
 					try {
 						disposeThink && disposeThink();
