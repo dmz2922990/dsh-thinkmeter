@@ -315,24 +315,36 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * A node joins a merged collapse group when it is a tool call, or an
-		 * assistant step that carries reasoning but no visible text output
-		 * (text-bearing assistant steps are real messages and stay separate).
+		 * Classify one chat node for merged grouping:
+		 *  - 'tool': a tool-call node
+		 *  - 'think': an assistant step with reasoning and NO visible text
+		 *  - 'think-text': an assistant step with reasoning AND text (the final
+		 *    answer step) — its think part may join the PRECEDING group as a
+		 *    trailing member, while its text always renders on its own.
+		 *  - null: not groupable (text-only answer, other kinds).
 		 */
-		function groupable(node) {
-			if (node.kind === "tool-call") return true;
-			if (node.kind !== "assistant-step") return false;
+		function nodeInfoOf(node) {
+			if (node.kind === "tool-call") return { kind: "tool" };
+			if (node.kind !== "assistant-step") return null;
 			var data = node.data;
-			if (data === undefined || data === null) return false;
+			if (data === undefined || data === null) return null;
 			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
 			var hasReasoning = false;
+			var hasText = false;
 			for (var i = 0; i < blocks.length; i++) {
 				var b = blocks[i];
 				if (b === undefined || b === null) continue;
 				if (b.kind === "reasoning") hasReasoning = true;
-				if (b.kind === "text" && typeof b.text === "string" && b.text.trim() !== "") return false;
+				if (b.kind === "text" && typeof b.text === "string" && b.text.trim() !== "") hasText = true;
 			}
-			return hasReasoning;
+			if (!hasReasoning) return null;
+			return { kind: hasText ? "think-text" : "think" };
+		}
+
+		/** Whether a node can anchor/extend a group chain by itself. */
+		function chainable(node) {
+			var info = nodeInfoOf(node);
+			return info !== null && info.kind !== "think-text";
 		}
 
 		/** Reasoning token count for one assistant step (exact when reported). */
@@ -374,8 +386,12 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * Compute the consecutive groupable run around `selfKey`, aggregating
-		 * think tokens/duration and the tool-call count for the group header.
+		 * Compute the merged group around `selfKey`.
+		 *
+		 * Roles: the first chainable node renders the group card ('first');
+		 * other chainable members hide ('member'); one trailing think-text
+		 * node ('trailing') joins the aggregates while its own slot keeps
+		 * rendering its text below the group.
 		 */
 		function groupRunOf(nodes, selfKey) {
 			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return null;
@@ -387,12 +403,28 @@ window.__ModuleLoader__.load({
 					break;
 				}
 			}
-			if (i === -1 || !groupable(list[i])) return null;
+			if (i === -1) return null;
+			var selfInfo = nodeInfoOf(list[i]);
+			if (selfInfo === null) return null;
+			// Chain extent: consecutive chainable nodes, plus at most one
+			// think-text node attached at the END of the chain.
 			var s0 = i;
-			while (s0 > 0 && groupable(list[s0 - 1])) s0--;
+			while (s0 > 0 && chainable(list[s0 - 1])) s0--;
 			var e0 = i;
-			while (e0 + 1 < list.length && groupable(list[e0 + 1])) e0++;
-			if (s0 !== i) return { first: false };
+			while (e0 + 1 < list.length && chainable(list[e0 + 1])) e0++;
+			var trailing = null;
+			if (e0 + 1 < list.length) {
+				var nextInfo = nodeInfoOf(list[e0 + 1]);
+				if (nextInfo !== null && nextInfo.kind === "think-text") {
+					trailing = list[e0 + 1];
+				}
+			}
+			if (selfInfo.kind === "think-text") {
+				// A think-text node only joins when a real chain precedes it.
+				if (s0 === i) return null;
+				return { role: "trailing", firstKey: list[s0].key };
+			}
+			if (s0 !== i) return { role: "member" };
 			var runNodes = [];
 			var anyRunning = false;
 			var thinkTokens = 0;
@@ -412,8 +444,13 @@ window.__ModuleLoader__.load({
 				}
 				runNodes.push(nd);
 			}
+			if (trailing !== null) {
+				thinkTokens += thinkTokensOf(trailing.data);
+				thinkMs += thinkMsOf(trailing.data);
+				if (trailing.data && trailing.data.status === "running") anyRunning = true;
+			}
 			return {
-				first: true,
+				role: "first",
 				firstKey: list[s0].key,
 				running: anyRunning,
 				thinkTokens: thinkTokens,
@@ -464,6 +501,27 @@ window.__ModuleLoader__.load({
 			return React.createElement(shipped, Object.assign({}, delegatedProps, { node: node }));
 		}
 
+		/** Render only the text blocks of one assistant step (think folded into the group). */
+		function AssistantTextOnly(props) {
+			var data = props.node && props.node.data;
+			if (data === undefined || data === null) return null;
+			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
+			var running = data.status === "running";
+			var children = [];
+			for (var i = 0; i < blocks.length; i++) {
+				var block = blocks[i];
+				if (block === undefined || block === null) continue;
+				if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
+					children.push(React.createElement("div", { key: "t" + i, className: "tkcnt-text" }, block.text));
+				}
+			}
+			if (data.status === "interrupted") {
+				children.push(React.createElement("span", { key: "stopped", className: "tkcnt-stopped" }, "Stopped"));
+			}
+			if (children.length === 0) return null;
+			return React.createElement("div", { className: "tkcnt-root", "data-streaming": running || undefined }, children);
+		}
+
 		function MergedGroupEntry(props) {
 			var node = props.node;
 			var useSession = props.useSession;
@@ -490,13 +548,17 @@ window.__ModuleLoader__.load({
 				},
 				[],
 			);
-			// Feature off, or a node outside every group (e.g. an assistant step
-			// with visible text): render normally. A grouped non-first node is
-			// rendered by the group's first node and hides itself here.
+			// Feature off, or a node outside every group: render normally.
 			if (!readPref() || run === null) {
 				return fallbackNodeRender(props, node);
 			}
-			if (!run.first) return null;
+			// Trailing think-text member: its think already counts in the group
+			// header; only its text renders, below the group card.
+			if (run.role === "trailing") {
+				return React.createElement(AssistantTextOnly, { node: node });
+			}
+			// Grouped non-first members hide; the group's first node renders them.
+			if (run.role !== "first") return null;
 			var isOpen = expandedRuns.has(run.firstKey);
 			// Header: [Think duration & tokens, tool-call count]
 			var parts = [];
@@ -538,18 +600,11 @@ window.__ModuleLoader__.load({
 				for (var i = 0; i < run.nodes.length; i++) {
 					var n = run.nodes[i];
 					if (n.key === node.key) {
-						// This node: reuse already-computed fallback rendering.
 						children.push(
-							React.createElement(
-								"div",
-								{ key: n.key },
-								fallbackNodeRender(props, n),
-							),
+							React.createElement("div", { key: n.key }, fallbackNodeRender(props, n)),
 						);
 					} else {
-						children.push(
-							React.createElement(GroupNodeView, { key: n.key, props: props, node: n }),
-						);
+						children.push(React.createElement(GroupNodeView, { key: n.key, props: props, node: n }));
 					}
 				}
 			}
