@@ -588,34 +588,40 @@ window.__ModuleLoader__.load({
 			if (run.count > 0) parts.push(run.count + " 次工具调用");
 			if (parts.length === 0) parts.push("运行中");
 			var header = parts.join("，") + (run.running ? " · 运行中" : "");
-			var children = [
-				React.createElement(
-					"div",
-					{
-						key: "head",
-						className: "tkgrp-row",
-						"data-state": run.running ? "running" : "ok",
-						role: "button",
-						tabIndex: 0,
-						title: isOpen ? "点击折叠" : "点击展开原始工具卡片",
-						onClick: function (e) {
-							e.stopPropagation();
-							toggleRun(run);
-						},
-						onKeyDown: function (e) {
-							if (e.key === "Enter" || e.key === " ") {
-								e.preventDefault();
+			var children = [];
+			if (run.count > 0) {
+				// The card header exists only for tool-bearing rounds; a
+				// think-only round renders the fold + text without a card, so no
+				// duplicate "Think" card appears outside tool cards.
+				children.push(
+					React.createElement(
+						"div",
+						{
+							key: "head",
+							className: "tkgrp-row",
+							"data-state": run.running ? "running" : "ok",
+							role: "button",
+							tabIndex: 0,
+							title: isOpen ? "点击折叠" : "点击展开原始工具卡片",
+							onClick: function (e) {
 								e.stopPropagation();
 								toggleRun(run);
-							}
+							},
+							onKeyDown: function (e) {
+								if (e.key === "Enter" || e.key === " ") {
+									e.preventDefault();
+									e.stopPropagation();
+									toggleRun(run);
+								}
+							},
 						},
-					},
-					React.createElement("span", { className: "tkgrp-chevron", "data-open": isOpen || undefined }, "▸"),
-					React.createElement("span", { className: "tkgrp-title" }, "Tool calls"),
-					React.createElement("span", { className: "tkgrp-summary" }, header),
-				),
-			];
-			if (isOpen) {
+						React.createElement("span", { className: "tkgrp-chevron", "data-open": isOpen || undefined }, "▸"),
+						React.createElement("span", { className: "tkgrp-title" }, "Tool calls"),
+						React.createElement("span", { className: "tkgrp-summary" }, header),
+					),
+				);
+			}
+			if (isOpen && run.count > 0) {
 				// Tool members delegate to the SHIPPED renderer (its toolview
 				// child slot goes through our registry-backed dispatch).
 				var shipped = findShippedToolComponent();
@@ -789,7 +795,7 @@ window.__ModuleLoader__.load({
 			}
 			return React.createElement(
 				"div",
-				{ className: "tkgrp-root", "data-open": isOpen || undefined },
+				{ className: "tkgrp-root", "data-open": (run.count > 0 && isOpen) || undefined },
 				children,
 			);
 		}
