@@ -138,23 +138,61 @@ window.__ModuleLoader__.load({
 			}
 		}
 
-		function usePref() {
-			var s = React.useState(readPref());
-			var on = s[0];
-			var setOn = s[1];
-			React.useEffect(
-				function () {
-					var fn = function () {
-						setOn(readPref());
-					};
-					prefListeners.add(fn);
-					return function () {
-						prefListeners.delete(fn);
-					};
-				},
-				[],
-			);
-			return on;
+
+		// ── markdown preference (default ON) ──
+
+		var MD_KEY = "dsh-thinkmeter:markdown";
+
+		function readMd() {
+			try {
+				if (typeof localStorage === "undefined") return true;
+				return localStorage.getItem(MD_KEY) !== "0";
+			} catch (e) {
+				return true;
+			}
+		}
+
+		function writeMd(value) {
+			try {
+				if (typeof localStorage !== "undefined") localStorage.setItem(MD_KEY, value ? "1" : "0");
+			} catch (e) {}
+			notifyPref();
+		}
+
+
+		/**
+		 * Lazy access to the SHIPPED MarkdownText component. The module-table
+		 * require is synchronous, so this is retried on later renders until the
+		 * primitives bundle has materialized (it always has by the time the
+		 * conversation renders).
+		 */
+		var primitivesValue;
+		function getPrimitives() {
+			if (primitivesValue !== undefined) return primitivesValue;
+			try {
+				primitivesValue = require("@deepseek-ai/dsh-client-ui-primitives") || null;
+			} catch (e) {
+				return null; // not materialized yet; retry next render
+			}
+			return primitivesValue;
+		}
+
+		var CODE_LABELS = { copyLabel: "复制", copiedLabel: "已复制" };
+
+		/** Render one assistant text block: official Markdown, or plain text. */
+		function renderTextBlock(key, text, streaming) {
+			if (readMd()) {
+				var prims = getPrimitives();
+				if (prims !== null && prims.MarkdownText !== undefined) {
+					return React.createElement(prims.MarkdownText, {
+						key: key,
+						text: text,
+						streaming: streaming,
+						codeLabels: CODE_LABELS,
+					});
+				}
+			}
+			return React.createElement("div", { key: key, className: "tkcnt-text" }, text);
 		}
 
 		// ── ThinkMeter ──
@@ -225,10 +263,10 @@ window.__ModuleLoader__.load({
 							usage: data.usage,
 						}),
 					);
-				} else if (block.kind === "text") {
-					children.push(
-						React.createElement("div", { key: "t" + i, className: "tkcnt-text" }, typeof block.text === "string" ? block.text : ""),
-					);
+				} else if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
+					// Skip whitespace-only text blocks; strip leading newlines.
+					var el = renderTextBlock("t" + i, block.text.replace(/^\n+/, ""), running && i === last);
+					if (el !== null) children.push(el);
 				}
 			}
 			if (data.status === "interrupted") {
@@ -462,35 +500,62 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		function CollapseToolsSettingRow() {
-			var on = usePref();
-			return React.createElement(
-				"div",
-				{ className: "tkset-row" },
-				React.createElement(
+		/** Generic preference toggle row. */
+		function makeToggleRow(read, write, label, desc) {
+			return function PrefRow() {
+				var s = React.useState(read());
+				var on = s[0];
+				var setOn = s[1];
+				React.useEffect(
+					function () {
+						var fn = function () {
+							setOn(read());
+						};
+						prefListeners.add(fn);
+						return function () {
+							prefListeners.delete(fn);
+						};
+					},
+					[],
+				);
+				return React.createElement(
 					"div",
-					{ className: "tkset-info" },
-					React.createElement("div", { className: "tkset-label" }, "折叠工具调用"),
+					{ className: "tkset-row" },
 					React.createElement(
 						"div",
-						{ className: "tkset-desc" },
-						"开启后，连续的工具调用折叠为分组框并显示数量；点击分组框展开为原始工具卡片，再次点击折叠",
+						{ className: "tkset-info" },
+						React.createElement("div", { className: "tkset-label" }, label),
+						React.createElement("div", { className: "tkset-desc" }, desc),
 					),
-				),
-				React.createElement(
-					"button",
-					{
-						className: "tkset-toggle" + (on ? " is-on" : ""),
-						role: "switch",
-						"aria-checked": on,
-						onClick: function () {
-							writePref(!on);
+					React.createElement(
+						"button",
+						{
+							className: "tkset-toggle" + (on ? " is-on" : ""),
+							role: "switch",
+							"aria-checked": on,
+							onClick: function () {
+								write(!on);
+							},
 						},
-					},
-					React.createElement("span", { className: "tkset-knob" }),
-				),
-			);
+						React.createElement("span", { className: "tkset-knob" }),
+					),
+				);
+			};
 		}
+
+		var CollapseToolsSettingRow = makeToggleRow(
+			readPref,
+			writePref,
+			"折叠工具调用",
+			"开启后，连续的工具调用折叠为分组框并显示数量；点击分组框展开为原始工具卡片，再次点击折叠",
+		);
+
+		var MarkdownSettingRow = makeToggleRow(
+			readMd,
+			writeMd,
+			"Markdown 渲染",
+			"开启后，回复文本按 Markdown 格式渲染（标题、列表、代码块等）；关闭则显示纯文本",
+		);
 
 		function apply(ctx) {
 			var slots = ctx.get("slots");
@@ -504,11 +569,17 @@ window.__ModuleLoader__.load({
 				return slots.register({ name: "conversation.chat.node", key: "assistant-step", priority: -1 }, AssistantStep);
 			});
 
-			// Settings row (Settings → General), always registered.
+			// Settings rows (Settings → General), always registered.
 			var disposeSettings = slots.inject("settings.general.item", function () {
 				return slots.register(
 					{ name: "settings.general.item", id: "thinkmeter-collapse-tools", order: 100, label: "折叠工具调用" },
 					CollapseToolsSettingRow,
+				);
+			});
+			var disposeSettingsMd = slots.inject("settings.general.item", function () {
+				return slots.register(
+					{ name: "settings.general.item", id: "thinkmeter-markdown", order: 101, label: "Markdown 渲染" },
+					MarkdownSettingRow,
 				);
 			});
 
@@ -549,6 +620,9 @@ window.__ModuleLoader__.load({
 					}
 					try {
 						disposeSettings && disposeSettings();
+					} catch (e) {}
+					try {
+						disposeSettingsMd && disposeSettingsMd();
 					} catch (e) {}
 					try {
 						disposeThink && disposeThink();
