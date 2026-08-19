@@ -1127,14 +1127,17 @@ window.__ModuleLoader__.load({
 
 		/** Root-scope overlay rail: dots for every user message, tip on hover, jump on click. */
 		function JumpRail() {
-			React.useState(false);
+			var tickState = React.useState(0);
+			var setTick = tickState[1];
 			var hoverState = React.useState(-1);
 			var hoverIdx = hoverState[0];
 			var setHoverIdx = hoverState[1];
 			React.useEffect(
 				function () {
 					var fn = function () {
-						setHoverIdx(-1);
+						setTick(function (v) {
+							return v + 1;
+						});
 					};
 					jumpListeners.add(fn);
 					var raf = 0;
