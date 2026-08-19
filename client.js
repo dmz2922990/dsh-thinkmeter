@@ -357,10 +357,12 @@ window.__ModuleLoader__.load({
 		}
 
 		/** Cached sorted visible-node list, keyed by the nodes store identity. */
-		var runCache = { nodes: null, sorted: null };
+		var runCache = { nodes: null, sorted: null, size: 0 };
 
 		function sortedVisible(nodes) {
-			if (runCache.nodes === nodes && runCache.sorted !== null) return runCache.sorted;
+			if (runCache.nodes === nodes && runCache.sorted !== null && runCache.size === nodes.size) {
+				return runCache.sorted;
+			}
 			var list = [];
 			for (var n of nodes.values()) {
 				if (n === undefined || n === null) continue;
@@ -370,8 +372,15 @@ window.__ModuleLoader__.load({
 			list.sort(function (a, b) {
 				return a.anchorSeq - b.anchorSeq || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
 			});
-			runCache = { nodes: nodes, sorted: list };
+			runCache = { nodes: nodes, sorted: list, size: nodes.size };
 			return list;
+		}
+
+		function indexIn(list, key) {
+			for (var j = 0; j < list.length; j++) {
+				if (list[j].key === key) return j;
+			}
+			return -1;
 		}
 
 		/**
@@ -401,12 +410,13 @@ window.__ModuleLoader__.load({
 		function toolRunOf(nodes, selfKey) {
 			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return null;
 			var list = sortedVisible(nodes);
-			var i = -1;
-			for (var j = 0; j < list.length; j++) {
-				if (list[j].key === selfKey) {
-					i = j;
-					break;
-				}
+			var i = indexIn(list, selfKey);
+			// The nodes store may be mutated in place (stable identity), so a
+			// cached list can be stale for a just-arrived node: force one recompute.
+			if (i === -1 && runCache.nodes === nodes) {
+				runCache = { nodes: null, sorted: null, size: 0 };
+				list = sortedVisible(nodes);
+				i = indexIn(list, selfKey);
 			}
 			if (i === -1 || !chainLink(list[i])) return null;
 			var s0 = i;
