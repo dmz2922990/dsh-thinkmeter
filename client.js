@@ -110,6 +110,40 @@ window.__ModuleLoader__.load({
 			return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 		}
 
+		function fmtDuration(ms) {
+			if (ms <= 0) return "";
+			if (ms < 1000) return ms + "ms";
+			return (Math.round(ms / 100) / 10).toFixed(1) + "s";
+		}
+
+		/** Reasoning token count for one assistant step (exact when reported). */
+		function thinkTokensOf(data) {
+			if (data === undefined || data === null) return 0;
+			var usage = data.usage;
+			if (typeof usage === "object" && usage !== null && typeof usage.reasoningTokens === "number") {
+				return usage.reasoningTokens;
+			}
+			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
+			var total = 0;
+			for (var i = 0; i < blocks.length; i++) {
+				var b = blocks[i];
+				if (b !== undefined && b !== null && b.kind === "reasoning" && typeof b.text === "string") {
+					total += estimateTokens(b.text);
+				}
+			}
+			return total;
+		}
+
+		/** Think duration ms for one assistant step from its final node timing. */
+		function thinkMsOf(data) {
+			var fn = data !== undefined && data !== null ? data.finalNode : undefined;
+			var timing = fn !== undefined && fn !== null ? fn.timing : undefined;
+			if (timing === undefined || timing.stepStartTime === null || timing.completedTime === null) {
+				return 0;
+			}
+			return Math.max(0, timing.completedTime - timing.stepStartTime);
+		}
+
 		// ── collapse-tools preference store (localStorage-backed, in-memory notify) ──
 
 		var PREF_KEY = "dsh-thinkmeter:collapseTools";
@@ -383,6 +417,8 @@ window.__ModuleLoader__.load({
 			var runNodes = [];
 			var anyRunning = false;
 			var toolCount = 0;
+			var thinkTokens = 0;
+			var thinkMs = 0;
 			for (var k = s0; k <= e0; k++) {
 				var nd = list[k];
 				if (nd.kind === "tool-call") {
@@ -390,12 +426,22 @@ window.__ModuleLoader__.load({
 					var root = nd.data && nd.data.root;
 					// Settled blocks carry kind 'tool-result'; running blocks have no kind.
 					if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
-				} else if (nd.data !== undefined && nd.data !== null && nd.data.status === "running") {
-					anyRunning = true;
+				} else {
+					thinkTokens += thinkTokensOf(nd.data);
+					thinkMs += thinkMsOf(nd.data);
+					if (nd.data !== undefined && nd.data !== null && nd.data.status === "running") anyRunning = true;
 				}
 				runNodes.push(nd);
 			}
-			return { first: true, firstKey: list[s0].key, count: toolCount, running: anyRunning, nodes: runNodes };
+			return {
+				first: true,
+				firstKey: list[s0].key,
+				count: toolCount,
+				running: anyRunning,
+				thinkTokens: thinkTokens,
+				thinkMs: thinkMs,
+				nodes: runNodes,
+			};
 		}
 
 		/** The shipped tool-call renderer shadowed by ours (same slot, priority 0). */
@@ -464,7 +510,15 @@ window.__ModuleLoader__.load({
 		/** The collapsed/expanded group card for one tool-call chain. */
 		function GroupCard(props, run) {
 			var isOpen = expandedRuns.has(run.firstKey);
-			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
+			// Header: [Think duration & tokens, tool-call count]
+			var parts = [];
+			if (run.thinkTokens > 0) {
+				var duration = fmtDuration(run.thinkMs);
+				parts.push("Think" + (duration !== "" ? " " + duration : "") + " · " + fmt(run.thinkTokens) + " tokens");
+			}
+			if (run.count > 0) parts.push(run.count + " 次工具调用");
+			if (parts.length === 0) parts.push("运行中");
+			var header = parts.join("，") + (run.running ? " · 运行中" : "");
 			var children = [
 				React.createElement(
 					"div",
