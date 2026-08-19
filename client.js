@@ -53,6 +53,7 @@ window.__ModuleLoader__.load({
 			".tkgrp-row{display:flex;align-items:center;gap:8px;min-height:24px;font-size:14px;line-height:24px;cursor:pointer;user-select:none;position:relative;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:4px 12px;background:var(--dsw-alias-bg-base);margin:4px 0 4px 4px;width:fit-content;min-width:180px}",
 			".tkgrp-root[data-open] .tkgrp-row{border:none;border-radius:0;padding:0 0 6px;margin:0;background:transparent;min-width:0}",
 			"[data-chat-flow-kind=tool-call]:empty{display:none}",
+			"[data-chat-flow-kind=assistant-step]:empty{display:none}",
 			'.tkgrp-row[data-state=running]:after{content:"";position:absolute;inset-block:0;left:0;width:300px;pointer-events:none;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-bg-base) 60%,transparent) 55%,transparent 100%);animation:tkcnt-sweep 2.6s ease-out infinite}',
 			".tkgrp-chevron{color:var(--dsw-alias-label-secondary);flex-shrink:0;width:14px;text-align:center;transition:transform .15s ease}",
 			".tkgrp-chevron[data-open]{transform:rotate(90deg)}",
@@ -314,10 +315,69 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * Compute the consecutive visible tool-call run around `selfKey`.
-		 * Returns the run's live node references for delegated rendering.
+		 * A node joins a merged collapse group when it is a tool call, or an
+		 * assistant step that carries reasoning but no visible text output
+		 * (text-bearing assistant steps are real messages and stay separate).
 		 */
-		function toolRunOf(nodes, selfKey) {
+		function groupable(node) {
+			if (node.kind === "tool-call") return true;
+			if (node.kind !== "assistant-step") return false;
+			var data = node.data;
+			if (data === undefined || data === null) return false;
+			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
+			var hasReasoning = false;
+			for (var i = 0; i < blocks.length; i++) {
+				var b = blocks[i];
+				if (b === undefined || b === null) continue;
+				if (b.kind === "reasoning") hasReasoning = true;
+				if (b.kind === "text" && typeof b.text === "string" && b.text.trim() !== "") return false;
+			}
+			return hasReasoning;
+		}
+
+		/** Reasoning token count for one assistant step (exact when reported). */
+		function thinkTokensOf(data) {
+			if (data === undefined || data === null) return 0;
+			var usage = data.usage;
+			if (typeof usage === "object" && usage !== null && typeof usage.reasoningTokens === "number") {
+				return usage.reasoningTokens;
+			}
+			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
+			var total = 0;
+			for (var i = 0; i < blocks.length; i++) {
+				var b = blocks[i];
+				if (b !== undefined && b !== null && b.kind === "reasoning" && typeof b.text === "string") {
+					total += estimateTokens(b.text);
+				}
+			}
+			return total;
+		}
+
+		/** Think duration ms for one assistant step from its final node timing. */
+		function thinkMsOf(data) {
+			var fn = data !== undefined && data !== null ? data.finalNode : undefined;
+			var timing = fn !== undefined && fn !== null ? fn.timing : undefined;
+			if (
+				timing === undefined ||
+				timing.stepStartTime === null ||
+				timing.completedTime === null
+			) {
+				return 0;
+			}
+			return Math.max(0, timing.completedTime - timing.stepStartTime);
+		}
+
+		function fmtDuration(ms) {
+			if (ms <= 0) return "";
+			if (ms < 1000) return ms + "ms";
+			return (Math.round(ms / 100) / 10).toFixed(1) + "s";
+		}
+
+		/**
+		 * Compute the consecutive groupable run around `selfKey`, aggregating
+		 * think tokens/duration and the tool-call count for the group header.
+		 */
+		function groupRunOf(nodes, selfKey) {
 			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return null;
 			var list = sortedVisible(nodes);
 			var i = -1;
@@ -327,22 +387,40 @@ window.__ModuleLoader__.load({
 					break;
 				}
 			}
-			if (i === -1 || list[i].kind !== "tool-call") return null;
+			if (i === -1 || !groupable(list[i])) return null;
 			var s0 = i;
-			while (s0 > 0 && list[s0 - 1].kind === "tool-call") s0--;
+			while (s0 > 0 && groupable(list[s0 - 1])) s0--;
 			var e0 = i;
-			while (e0 + 1 < list.length && list[e0 + 1].kind === "tool-call") e0++;
+			while (e0 + 1 < list.length && groupable(list[e0 + 1])) e0++;
 			if (s0 !== i) return { first: false };
 			var runNodes = [];
 			var anyRunning = false;
+			var thinkTokens = 0;
+			var thinkMs = 0;
+			var toolCount = 0;
 			for (var k = s0; k <= e0; k++) {
 				var nd = list[k];
-				var root = nd.data && nd.data.root;
-				// Settled blocks carry kind 'tool-result'; running blocks have no kind.
-				if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
+				if (nd.kind === "tool-call") {
+					toolCount++;
+					var root = nd.data && nd.data.root;
+					// Settled blocks carry kind 'tool-result'; running blocks have no kind.
+					if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
+				} else {
+					thinkTokens += thinkTokensOf(nd.data);
+					thinkMs += thinkMsOf(nd.data);
+					if (nd.data && nd.data.status === "running") anyRunning = true;
+				}
 				runNodes.push(nd);
 			}
-			return { first: true, firstKey: list[s0].key, count: e0 - s0 + 1, running: anyRunning, nodes: runNodes };
+			return {
+				first: true,
+				firstKey: list[s0].key,
+				running: anyRunning,
+				thinkTokens: thinkTokens,
+				thinkMs: thinkMs,
+				toolCount: toolCount,
+				nodes: runNodes,
+			};
 		}
 
 		/** The shipped tool-call renderer shadowed by ours (same slot, priority 0). */
@@ -358,7 +436,7 @@ window.__ModuleLoader__.load({
 						e !== undefined &&
 						e.options !== undefined &&
 						e.options.key === "tool-call" &&
-						e.component !== ToolGroupEntry
+						e.component !== MergedGroupEntry
 					) {
 						return e.component;
 					}
@@ -367,7 +445,26 @@ window.__ModuleLoader__.load({
 			return null;
 		}
 
-		function ToolGroupEntry(props) {
+		/** Fallback rendering for one run node outside merged grouping. */
+		function fallbackNodeRender(props, node) {
+			if (node.kind === "assistant-step") {
+				return React.createElement(AssistantStep, Object.assign({}, props, { node: node }));
+			}
+			// tool-call: delegate to the SHIPPED renderer with our registry-backed
+			// renderSlot (the framework binding is reserved to the entry that
+			// declared the toolview child slot).
+			var shipped = findShippedToolComponent();
+			if (shipped === null) return null;
+			var kit = kitOf(props);
+			var delegatedProps = Object.assign({}, props, {
+				renderSlot: function (key, owner, opts) {
+					return dispatchSlot(key, owner, opts, kit);
+				},
+			});
+			return React.createElement(shipped, Object.assign({}, delegatedProps, { node: node }));
+		}
+
+		function MergedGroupEntry(props) {
 			var node = props.node;
 			var useSession = props.useSession;
 			if (typeof useSession !== "function" || node === undefined) return null;
@@ -375,7 +472,7 @@ window.__ModuleLoader__.load({
 			// first-of-run and non-first across renders, and React requires a
 			// stable hook count.
 			var run = useSession(function (snapshot) {
-				return toolRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
+				return groupRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
 			});
 			var state = React.useState(false);
 			var bump = state[1];
@@ -393,9 +490,21 @@ window.__ModuleLoader__.load({
 				},
 				[],
 			);
-			if (run === null || !run.first) return null;
+			// Outside grouping (feature off, or an assistant step with visible
+			// text): fall back to the normal single-node rendering.
+			if (!readPref() || run === null || !run.first) {
+				return fallbackNodeRender(props, node);
+			}
 			var isOpen = expandedRuns.has(run.firstKey);
-			var header = run.count + " 次工具调用" + (run.running ? " · 运行中" : "");
+			// Header: [Think duration & tokens, tool-call count]
+			var parts = [];
+			if (run.thinkTokens > 0) {
+				var duration = fmtDuration(run.thinkMs);
+				parts.push("Think" + (duration !== "" ? " " + duration : "") + " · " + fmt(run.thinkTokens) + " tokens");
+			}
+			if (run.toolCount > 0) parts.push(run.toolCount + " 次工具调用");
+			if (parts.length === 0) parts.push("运行中");
+			var header = parts.join("，") + (run.running ? " · 运行中" : "");
 			var children = [
 				React.createElement(
 					"div",
@@ -405,7 +514,7 @@ window.__ModuleLoader__.load({
 						"data-state": run.running ? "running" : "ok",
 						role: "button",
 						tabIndex: 0,
-						title: isOpen ? "点击折叠" : "点击展开原始工具卡片",
+						title: isOpen ? "点击折叠" : "点击展开详情",
 						onClick: function (e) {
 							e.stopPropagation();
 							toggleRun(run.firstKey);
@@ -419,32 +528,27 @@ window.__ModuleLoader__.load({
 						},
 					},
 					React.createElement("span", { className: "tkgrp-chevron", "data-open": isOpen || undefined }, "▸"),
-					React.createElement("span", { className: "tkgrp-title" }, "Tool calls"),
+					React.createElement("span", { className: "tkgrp-title" }, "Think & Tools"),
 					React.createElement("span", { className: "tkgrp-summary" }, header),
 				),
 			];
 			if (isOpen) {
-				// Delegate each run node to the SHIPPED tool-call renderer. The
-				// shipped component dispatches its toolview child slot through
-				// props.renderSlot — a framework binding our entry cannot obtain
-				// (the child slot is already declared by the shipped entry), so we
-				// supply our own registry-backed dispatch with the same kit.
-				var shipped = findShippedToolComponent();
-				if (shipped !== null) {
-					var kit = kitOf(props);
-					var delegatedProps = Object.assign({}, props, {
-						renderSlot: function (key, owner, opts) {
-							return dispatchSlot(key, owner, opts, kit);
-						},
-					});
-					for (var i = 0; i < run.nodes.length; i++) {
-						var n = run.nodes[i];
-						children.push(React.createElement(shipped, Object.assign({}, delegatedProps, { key: n.key, node: n })));
+				for (var i = 0; i < run.nodes.length; i++) {
+					var n = run.nodes[i];
+					if (n.key === node.key) {
+						// This node: reuse already-computed fallback rendering.
+						children.push(
+							React.createElement(
+								"div",
+								{ key: n.key },
+								fallbackNodeRender(props, n),
+							),
+						);
+					} else {
+						children.push(
+							React.createElement(GroupNodeView, { key: n.key, props: props, node: n }),
+						);
 					}
-				} else {
-					children.push(
-						React.createElement("div", { key: "fallback", className: "tkgrp-summary" }, "(原始渲染器不可用)"),
-					);
 				}
 			}
 			return React.createElement(
@@ -452,6 +556,11 @@ window.__ModuleLoader__.load({
 				{ className: "tkgrp-root", "data-open": isOpen || undefined },
 				children,
 			);
+		}
+
+		/** Render one non-self run node inside an expanded group. */
+		function GroupNodeView(props) {
+			return fallbackNodeRender(props.props, props.node);
 		}
 
 		function CollapseToolsSettingRow() {
@@ -462,11 +571,11 @@ window.__ModuleLoader__.load({
 				React.createElement(
 					"div",
 					{ className: "tkset-info" },
-					React.createElement("div", { className: "tkset-label" }, "折叠工具调用"),
+					React.createElement("div", { className: "tkset-label" }, "折叠 Think 与工具调用"),
 					React.createElement(
 						"div",
 						{ className: "tkset-desc" },
-						"开启后，连续的工具调用折叠为分组框并显示数量；点击分组框展开为原始工具卡片，再次点击折叠",
+						"开启后，连续的思考与工具调用合并为一个分组框，显示 Think 时长、token 数与工具调用次数；点击展开原始内容，再次点击折叠",
 					),
 				),
 				React.createElement(
@@ -490,10 +599,14 @@ window.__ModuleLoader__.load({
 			slotsRef = slots;
 			var disposeStyle = insertStyle();
 
-			// ThinkMeter: always-on shadow of the shipped assistant-step renderer.
+			// Think meter + merged groups: the assistant-step shadow is always on;
+			// when the collapse preference is off it renders the plain think meter.
 			var disposeThink = slots.inject("conversation.chat.node", function () {
 				// priority -1 shadows the shipped assistant-step entry at priority 0 (lowest renders)
-				return slots.register({ name: "conversation.chat.node", key: "assistant-step", priority: -1 }, AssistantStep);
+				return slots.register(
+					{ name: "conversation.chat.node", key: "assistant-step", priority: -1, locale: "conversation" },
+					MergedGroupEntry,
+				);
 			});
 
 			// Settings row (Settings → General), always registered.
@@ -504,8 +617,8 @@ window.__ModuleLoader__.load({
 				);
 			});
 
-			// Tool-call group shadow: registered only while the preference is on,
-			// so turning it off restores the shipped tool cards.
+			// Tool-call shadow: registered only while the preference is on, so
+			// turning it off restores the shipped tool cards and plain grouping.
 			var shadowDisp = null;
 			function syncShadow() {
 				if (readPref() && shadowDisp === null) {
@@ -517,7 +630,7 @@ window.__ModuleLoader__.load({
 								priority: -1,
 								locale: "conversation",
 							},
-							ToolGroupEntry,
+							MergedGroupEntry,
 						);
 					});
 				} else if (!readPref() && shadowDisp !== null) {
