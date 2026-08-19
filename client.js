@@ -596,23 +596,47 @@ window.__ModuleLoader__.load({
 			var toolState = React.useState(false);
 			var toolBlocksOpen = toolState[0];
 			var setToolBlocksOpen = toolState[1];
-			var isOpen = runOpen(run);
+			// Live ticker while the anchor step is running: keeps the elapsed
+			// seconds and the streamed token estimate updating in the header.
+			var tickState = React.useState(0);
+			var setTick = tickState[1];
 			var anchor = run.nodes[0];
 			var anchorData = anchor !== undefined && anchor !== null ? anchor.data : undefined;
+			var running = anchorData !== undefined && anchorData !== null && anchorData.status === "running";
+			React.useEffect(
+				function () {
+					if (!running) return;
+					var id = setInterval(function () {
+						setTick(function (v) {
+							return v + 1;
+						});
+					}, 500);
+					return function () {
+						clearInterval(id);
+					};
+				},
+				[running],
+			);
+			var isOpen = runOpen(run);
+			// Live header values while running: elapsed wall-clock seconds and
+			// the reasoning-text estimate (usage is only reported on settle).
+			var liveSecs = running && typeof anchorData.time === "number" ? (Date.now() - anchorData.time) / 1000 : null;
+			var headerTokens = running ? thinkTokensOf(anchorData) : run.thinkTokens;
+			var headerMs = running && liveSecs !== null ? liveSecs * 1000 : run.thinkMs;
 			// Header: [Think duration & tokens, tool-call count]
 			var parts = [];
-			if (run.thinkTokens > 0) {
-				var duration = fmtDuration(run.thinkMs);
-				parts.push("Think" + (duration !== "" ? " " + duration : "") + " · " + fmt(run.thinkTokens) + " tokens");
+			if (headerTokens > 0) {
+				var duration = running ? (Math.round(headerMs / 100) / 10).toFixed(1) + "s" : fmtDuration(run.thinkMs);
+				parts.push("Think" + (duration !== "" ? " " + duration : "") + " · " + fmt(headerTokens) + " tokens");
 			}
 			if (run.count > 0) parts.push(run.count + " 次工具调用");
 			if (parts.length === 0) parts.push("运行中");
 			var header = parts.join("，") + (run.running ? " · 运行中" : "");
 			var children = [];
-			if (run.count > 0) {
-				// The card header exists only for tool-bearing rounds; a
-				// think-only round renders the fold + text without a card, so no
-				// duplicate "Think" card appears outside tool cards.
+			// The card renders while running (immediate, live header) and for
+			// every tool-bearing round; a settled think-only round (final
+			// answer) renders the fold + text without a card.
+			if (running || run.count > 0) {
 				children.push(
 					React.createElement(
 						"div",
@@ -824,7 +848,7 @@ window.__ModuleLoader__.load({
 					);
 				}
 			}
-			var rootClass = "tkgrp-root" + (run.count > 0 ? " tkgrp-card" : "");
+			var rootClass = "tkgrp-root" + (running || run.count > 0 ? " tkgrp-card" : "");
 			return React.createElement(
 				"div",
 				{ className: rootClass, "data-open": isOpen || undefined },
