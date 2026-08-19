@@ -439,7 +439,9 @@ window.__ModuleLoader__.load({
 			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
 			for (var i = 0; i < blocks.length; i++) {
 				var b = blocks[i];
-				if (b !== undefined && b !== null && b.kind === "reasoning" && typeof b.text === "string" && b.text.trim() !== "") {
+				// A reasoning block exists even while its text is still empty
+				// (streaming start) — that is enough to anchor a live card.
+				if (b !== undefined && b !== null && b.kind === "reasoning") {
 					return true;
 				}
 			}
@@ -465,8 +467,10 @@ window.__ModuleLoader__.load({
 				i = indexIn(list, selfKey);
 			}
 			if (i === -1) return null;
-			var selfThink = hasReasoningText(list[i]);
-			var selfTool = list[i].kind === "tool-call";
+			var selfNode = nodes.get(selfKey);
+			if (selfNode === undefined || selfNode === null) selfNode = list[i];
+			var selfThink = hasReasoningText(selfNode);
+			var selfTool = selfNode.kind === "tool-call";
 			if (!selfThink && !selfTool) return null;
 			var anchor = i;
 			if (selfTool) {
@@ -486,13 +490,19 @@ window.__ModuleLoader__.load({
 			var toolCount = 0;
 			var thinkTokens = 0;
 			var thinkMs = 0;
-			if (hasReasoningText(list[s0])) {
-				thinkTokens = thinkTokensOf(list[s0].data);
-				thinkMs = thinkMsOf(list[s0].data);
-				if (list[s0].data !== undefined && list[s0].data !== null && list[s0].data.status === "running") anyRunning = true;
+			// Read LIVE node objects by key: the cached list only provides the
+			// ORDER, while its node refs may be stale (store mutated in place),
+			// which would freeze streaming token/duration reads at their first
+			// empty values.
+			var anchorLive = nodes.get(list[s0].key);
+			if (anchorLive !== undefined && anchorLive !== null && hasReasoningText(anchorLive)) {
+				thinkTokens = thinkTokensOf(anchorLive.data);
+				thinkMs = thinkMsOf(anchorLive.data);
+				if (anchorLive.data !== undefined && anchorLive.data !== null && anchorLive.data.status === "running") anyRunning = true;
 			}
 			for (var k = s0; k <= e0; k++) {
-				var nd = list[k];
+				var nd = nodes.get(list[k].key);
+				if (nd === undefined || nd === null) nd = list[k];
 				if (nd.kind === "tool-call") {
 					toolCount++;
 					var root = nd.data && nd.data.root;
