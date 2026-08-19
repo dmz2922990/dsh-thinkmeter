@@ -70,6 +70,7 @@ window.__ModuleLoader__.load({
 			".tkgrp-dock{display:flex;justify-content:center;padding:2px 0}",
 			".tkgrp-dock-btn{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);border:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:20px;padding:2px 10px}",
 			".tkgrp-dock-btn:hover{color:var(--dsw-alias-label-primary)}",
+			".tkgrp-out{color:var(--dsw-alias-label-tertiary);white-space:pre-wrap;word-break:break-word;padding:6px 0 4px 4px;font-size:14px;line-height:24px}",
 			"@media (prefers-reduced-motion:reduce){.tkgrp-row[data-state=running]:after{animation:none}}",
 		].join("\n");
 
@@ -402,30 +403,32 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * A node links a tool-call chain when it is a tool call, or the
-		 * assistant step that ISSUED tool calls (its blocks contain tool-call
-		 * entries; such steps interleave between the tool rows in real turns).
-		 * Think-only and final-answer steps are NOT links: they keep rendering
-		 * their own cards.
+		 * Whether an assistant step carries reasoning text (a think output).
+		 * Every such step anchors its own round card; its think output text is
+		 * the always-visible divider between cards.
 		 */
-		function chainLink(node) {
-			if (node.kind === "tool-call") return true;
+		function hasReasoningText(node) {
 			if (node.kind !== "assistant-step") return false;
 			var data = node.data;
 			if (data === undefined || data === null) return false;
 			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
 			for (var i = 0; i < blocks.length; i++) {
 				var b = blocks[i];
-				if (b !== undefined && b !== null && b.kind === "tool-call") return true;
+				if (b !== undefined && b !== null && b.kind === "reasoning" && typeof b.text === "string" && b.text.trim() !== "") {
+					return true;
+				}
 			}
 			return false;
 		}
 
 		/**
-		 * Compute the consecutive tool-call chain around `selfKey`.
-		 * Returns the run's live node references for delegated rendering.
+		 * Round model — each think output divides the cards:
+		 *  - a reasoning assistant step anchors a round = [step, following
+		 *    tool-call nodes up to the next reasoning step];
+		 *  - tool-call nodes attach to the nearest preceding reasoning step, or
+		 *    anchor a tool-only round when no reasoning precedes them.
 		 */
-		function toolRunOf(nodes, selfKey) {
+		function roundRunOf(nodes, selfKey) {
 			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return null;
 			var list = sortedVisible(nodes);
 			var i = indexIn(list, selfKey);
@@ -436,17 +439,33 @@ window.__ModuleLoader__.load({
 				list = sortedVisible(nodes);
 				i = indexIn(list, selfKey);
 			}
-			if (i === -1 || !chainLink(list[i])) return null;
-			var s0 = i;
-			while (s0 > 0 && chainLink(list[s0 - 1])) s0--;
-			var e0 = i;
-			while (e0 + 1 < list.length && chainLink(list[e0 + 1])) e0++;
+			if (i === -1) return null;
+			var selfThink = hasReasoningText(list[i]);
+			var selfTool = list[i].kind === "tool-call";
+			if (!selfThink && !selfTool) return null;
+			var anchor = i;
+			if (selfTool) {
+				// Attach to the nearest preceding reasoning step across any run
+				// of tools; otherwise anchor a tool-only round at the first tool.
+				var j = i;
+				while (j > 0 && list[j - 1].kind === "tool-call") j--;
+				if (j > 0 && hasReasoningText(list[j - 1])) anchor = j - 1;
+				else anchor = j;
+			}
+			var s0 = anchor;
+			var e0 = s0;
+			while (e0 + 1 < list.length && list[e0 + 1].kind === "tool-call") e0++;
 			if (s0 !== i) return { first: false };
 			var runNodes = [];
 			var anyRunning = false;
 			var toolCount = 0;
 			var thinkTokens = 0;
 			var thinkMs = 0;
+			if (hasReasoningText(list[s0])) {
+				thinkTokens = thinkTokensOf(list[s0].data);
+				thinkMs = thinkMsOf(list[s0].data);
+				if (list[s0].data !== undefined && list[s0].data !== null && list[s0].data.status === "running") anyRunning = true;
+			}
 			for (var k = s0; k <= e0; k++) {
 				var nd = list[k];
 				if (nd.kind === "tool-call") {
@@ -454,10 +473,6 @@ window.__ModuleLoader__.load({
 					var root = nd.data && nd.data.root;
 					// Settled blocks carry kind 'tool-result'; running blocks have no kind.
 					if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
-				} else {
-					thinkTokens += thinkTokensOf(nd.data);
-					thinkMs += thinkMsOf(nd.data);
-					if (nd.data !== undefined && nd.data !== null && nd.data.status === "running") anyRunning = true;
 				}
 				runNodes.push(nd);
 			}
@@ -485,7 +500,7 @@ window.__ModuleLoader__.load({
 						e !== undefined &&
 						e.options !== undefined &&
 						e.options.key === "tool-call" &&
-						e.component !== ToolGroupEntry
+						e.component !== RoundEntry
 					) {
 						return e.component;
 					}
@@ -494,7 +509,8 @@ window.__ModuleLoader__.load({
 			return null;
 		}
 
-		function ToolGroupEntry(props) {
+		/** One round entry, shared by the assistant-step and tool-call seats. */
+		function RoundEntry(props) {
 			var node = props.node;
 			var useSession = props.useSession;
 			if (typeof useSession !== "function" || node === undefined) return null;
@@ -502,7 +518,7 @@ window.__ModuleLoader__.load({
 			// first-of-run and non-first across renders, and React requires a
 			// stable hook count.
 			var run = useSession(function (snapshot) {
-				return toolRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
+				return roundRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
 			});
 			var state = React.useState(false);
 			var bump = state[1];
@@ -520,24 +536,34 @@ window.__ModuleLoader__.load({
 				},
 				[],
 			);
-			if (run === null) return null;
+			if (run === null) {
+				// Outside every round: plain per-node rendering.
+				if (node.kind === "assistant-step") return AssistantStep(props);
+				return null;
+			}
 			// Hidden members render a marker element; the :has() CSS rule below
 			// removes the whole flow wrapper from layout (flex gap included),
 			// independent of :empty support.
 			if (!run.first) {
 				return hiddenMarker();
 			}
-			return GroupCard(props, run);
+			return RoundView(props, run);
 		}
 
-		/** Layout-invisible marker rendered by hidden chain members. */
+		/** Layout-invisible marker rendered by hidden round members. */
 		function hiddenMarker() {
 			return React.createElement("div", { className: "tkgrp-hidden", style: { display: "none" } });
 		}
 
-		/** The collapsed/expanded group card for one tool-call chain. */
-		function GroupCard(props, run) {
+		/**
+		 * One round: collapsed card (Think summary + tool count) on top, the
+		 * think OUTPUT text as an always-visible divider below, and (for the
+		 * final answer step) the answer text after it.
+		 */
+		function RoundView(props, run) {
 			var isOpen = runOpen(run);
+			var anchor = run.nodes[0];
+			var anchorData = anchor !== undefined && anchor !== null ? anchor.data : undefined;
 			// Header: [Think duration & tokens, tool-call count]
 			var parts = [];
 			if (run.thinkTokens > 0) {
@@ -575,26 +601,22 @@ window.__ModuleLoader__.load({
 				),
 			];
 			if (isOpen) {
-				// Tool nodes delegate to the SHIPPED renderer (its toolview child
-				// slot goes through our registry-backed dispatch); interleaved
-				// assistant steps render through our own AssistantStep.
+				// Tool members delegate to the SHIPPED renderer (its toolview
+				// child slot goes through our registry-backed dispatch).
 				var shipped = findShippedToolComponent();
 				var kit = kitOf(props);
 				for (var i = 0; i < run.nodes.length; i++) {
 					var n = run.nodes[i];
-					if (n.kind === "tool-call") {
-						if (shipped !== null) {
-							var delegatedProps = Object.assign({}, props, {
-								renderSlot: function (key, owner, opts) {
-									return dispatchSlot(key, owner, opts, kit);
-								},
-							});
-							children.push(
-								React.createElement(shipped, Object.assign({}, delegatedProps, { key: n.key, node: n })),
-							);
-						}
-					} else {
-						children.push(React.createElement(AssistantStep, { key: n.key, node: n }));
+					if (n.kind !== "tool-call") continue;
+					if (shipped !== null) {
+						var delegatedProps = Object.assign({}, props, {
+							renderSlot: function (key, owner, opts) {
+								return dispatchSlot(key, owner, opts, kit);
+							},
+						});
+						children.push(
+							React.createElement(shipped, Object.assign({}, delegatedProps, { key: n.key, node: n })),
+						);
 					}
 				}
 				if (shipped === null && run.count > 0) {
@@ -603,48 +625,31 @@ window.__ModuleLoader__.load({
 					);
 				}
 			}
+			// Think output divider (always visible) + answer text for the anchor.
+			if (hasReasoningText(anchor)) {
+				var blocks = Array.isArray(anchorData !== undefined && anchorData !== null ? anchorData.blocks : []) ? anchorData.blocks : [];
+				for (var b = 0; b < blocks.length; b++) {
+					var block = blocks[b];
+					if (block === undefined || block === null) continue;
+					if (block.kind === "reasoning" && typeof block.text === "string" && block.text.trim() !== "") {
+						children.push(
+							React.createElement(
+								"div",
+								{ key: "out" + b, className: "tkgrp-out" },
+								block.text.replace(/^\n+/, ""),
+							),
+						);
+					} else if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
+						var answer = renderTextBlock("ans" + b, block.text.replace(/^\n+/, ""), false);
+						if (answer !== null) children.push(answer);
+					}
+				}
+			}
 			return React.createElement(
 				"div",
 				{ className: "tkgrp-root", "data-open": isOpen || undefined },
 				children,
 			);
-		}
-
-		/**
-		 * Assistant-step entry, chain-aware: a step whose blocks issued tool
-		 * calls hides inside the tool group (or anchors its card when it starts
-		 * the chain); every other step renders the plain think meter.
-		 */
-		function AssistantStepChainAware(props) {
-			var node = props.node;
-			var useSession = props.useSession;
-			if (typeof useSession !== "function" || node === undefined) return AssistantStep(props);
-			// Hooks unconditional (see ToolGroupEntry note).
-			var run = useSession(function (snapshot) {
-				return toolRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
-			});
-			var state = React.useState(false);
-			var bump = state[1];
-			React.useEffect(
-				function () {
-					var fn = function () {
-						bump(function (v) {
-							return !v;
-						});
-					};
-					expandListeners.add(fn);
-					return function () {
-						expandListeners.delete(fn);
-					};
-				},
-				[],
-			);
-			if (run === null) return AssistantStep(props);
-			if (!run.first) return hiddenMarker();
-			// Only anchor the card when the chain actually has tool calls; a
-			// lone issuing step (tools not yet materialized) stays a think card.
-			if (run.count === 0) return AssistantStep(props);
-			return GroupCard(props, run);
 		}
 
 		/** Generic preference toggle row. */
@@ -711,7 +716,7 @@ window.__ModuleLoader__.load({
 				// priority -1 shadows the shipped assistant-step entry at priority 0 (lowest renders)
 				return slots.register(
 					{ name: "conversation.chat.node", key: "assistant-step", priority: -1, locale: "conversation" },
-					AssistantStepChainAware,
+					RoundEntry,
 				);
 			});
 
@@ -736,7 +741,7 @@ window.__ModuleLoader__.load({
 								priority: -1,
 								locale: "conversation",
 							},
-							ToolGroupEntry,
+							RoundEntry,
 						);
 					});
 				} else if (!readPref() && shadowDisp !== null) {
