@@ -229,9 +229,11 @@ window.__ModuleLoader__.load({
 							usage: data.usage,
 						}),
 					);
-				} else if (block.kind === "text") {
+				} else if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
+					// Skip whitespace-only text blocks: pre-wrap would render
+					// them as blank lines. Leading newlines are stripped too.
 					children.push(
-						React.createElement("div", { key: "t" + i, className: "tkcnt-text" }, typeof block.text === "string" ? block.text : ""),
+						React.createElement("div", { key: "t" + i, className: "tkcnt-text" }, block.text.replace(/^\n+/, "")),
 					);
 				}
 			}
@@ -524,7 +526,9 @@ window.__ModuleLoader__.load({
 				var block = blocks[i];
 				if (block === undefined || block === null) continue;
 				if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
-					children.push(React.createElement("div", { key: "t" + i, className: "tkcnt-text" }, block.text));
+					children.push(
+						React.createElement("div", { key: "t" + i, className: "tkcnt-text" }, block.text.replace(/^\n+/, "")),
+					);
 				}
 			}
 			if (data.status === "interrupted") {
