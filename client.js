@@ -317,10 +317,12 @@ window.__ModuleLoader__.load({
 		/**
 		 * Classify one chat node for merged grouping:
 		 *  - 'tool': a tool-call node
-		 *  - 'think': an assistant step with reasoning and NO visible text
-		 *  - 'think-text': an assistant step with reasoning AND text (the final
-		 *    answer step) — its think part may join the PRECEDING group as a
-		 *    trailing member, while its text always renders on its own.
+		 *  - 'think': chainable — an assistant step that issues tool calls
+		 *    (intermediate steps are chainable regardless of incidental text),
+		 *    or a reasoning-only step
+		 *  - 'think-text': an assistant step with reasoning AND text but NO
+		 *    tool calls (the final answer step) — its think part may join the
+		 *    PRECEDING group as a trailing member; its text always renders alone
 		 *  - null: not groupable (text-only answer, other kinds).
 		 */
 		function nodeInfoOf(node) {
@@ -331,12 +333,17 @@ window.__ModuleLoader__.load({
 			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
 			var hasReasoning = false;
 			var hasText = false;
+			var hasToolCalls = false;
 			for (var i = 0; i < blocks.length; i++) {
 				var b = blocks[i];
 				if (b === undefined || b === null) continue;
 				if (b.kind === "reasoning") hasReasoning = true;
-				if (b.kind === "text" && typeof b.text === "string" && b.text.trim() !== "") hasText = true;
+				else if (b.kind === "text" && typeof b.text === "string" && b.text.trim() !== "") hasText = true;
+				else if (b.kind === "tool-call") hasToolCalls = true;
 			}
+			// A step that issues tool calls is always an intermediate step:
+			// chainable even when it carries visible commentary text.
+			if (hasToolCalls) return { kind: "think" };
 			if (!hasReasoning) return null;
 			return { kind: hasText ? "think-text" : "think" };
 		}
