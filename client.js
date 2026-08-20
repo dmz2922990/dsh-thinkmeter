@@ -75,7 +75,7 @@ window.__ModuleLoader__.load({
 			".tkgrp-out{color:var(--dsw-alias-label-tertiary);white-space:pre-wrap;word-break:break-word;padding:2px 0 4px 22px;font-size:14px;line-height:24px}",
 			".jk-rail{position:fixed;width:20px;pointer-events:auto;z-index:21;cursor:default}",
 			".jk-rail-active{cursor:pointer}",
-			".jk-idle{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;gap:5px;align-items:center}",
+			".jk-idle{position:absolute;left:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;gap:5px;align-items:center}",
 			".jk-idle-dot{width:4px;height:4px;border-radius:50%;background:var(--dsw-alias-label-caption);opacity:.7}",
 			".jk-dot{position:absolute;left:50%;border-radius:50%;background:var(--dsw-alias-label-secondary);cursor:pointer;transform:translate(-50%,-50%)}",
 			".jk-dot-active{background:var(--dsw-alias-label-primary);box-shadow:0 0 0 1px var(--dsw-alias-bg-base)}",
@@ -1406,13 +1406,23 @@ window.__ModuleLoader__.load({
 			var railHeight = rect.height;
 			var scrollbar = Math.max(0, jumpContainer.offsetWidth - jumpContainer.clientWidth);
 			var railLeft = rect.right - scrollbar - 16;
+			// Center on the MESSAGE FLOW area, not the whole scroll body (which
+			// includes the composer seat and would sit the indicator too low).
+			var centerLocal = railHeight / 2;
+			try {
+				var flow = jumpContainer.querySelector("[data-chat-flow]");
+				if (flow !== null) {
+					var fr = flow.getBoundingClientRect();
+					if (fr.height > 0) centerLocal = fr.top - railTop + fr.height / 2;
+				}
+			} catch (e) {}
 			var children = [];
 			if (!active) {
 				// Idle: three small dots vertically centered.
 				children.push(
 					React.createElement(
 						"div",
-						{ key: "idle", className: "jk-idle" },
+						{ key: "idle", className: "jk-idle", style: { top: centerLocal } },
 						React.createElement("span", { className: "jk-idle-dot" }),
 						React.createElement("span", { className: "jk-idle-dot" }),
 						React.createElement("span", { className: "jk-idle-dot" }),
@@ -1425,9 +1435,8 @@ window.__ModuleLoader__.load({
 				var n = jumpEntries.length;
 				// Rail-LOCAL coordinates for style.top (the rail itself is
 				// fixed-positioned, so viewport coords would double-offset).
-				var centerYLocal = railHeight / 2;
 				// Anchor the cluster's BOTTOM at the lowest idle dot, growing up.
-				var anchorLocal = centerYLocal + 9;
+				var anchorLocal = centerLocal + 9;
 				var spacing = Math.min(14, Math.max(6, anchorLocal / Math.max(1, n - 1 || 1)));
 				var tipEntry = null;
 				var tipTop = 0;
