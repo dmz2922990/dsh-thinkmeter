@@ -1419,13 +1419,20 @@ window.__ModuleLoader__.load({
 					),
 				);
 			} else {
-				// Lens dots: size peaks at the cursor and decays away from it.
+				// Compact cluster: dots evenly and tightly packed around the
+				// rail's vertical center (uniform spacing); only the SIZE peaks
+				// at the cursor and decays away from it.
+				var n = jumpEntries.length;
+				var spacing = Math.min(14, Math.max(6, (railHeight - 20) / Math.max(1, n - 1 || 1)));
+				var centerY = railTop + railHeight / 2;
 				var tipEntry = null;
 				var tipTop = 0;
 				var nearest = -1;
 				var nearestD = Infinity;
-				for (var p = 0; p < jumpEntries.length; p++) {
-					var y = railTop + jumpEntries[p].pct * (railHeight - 12) + 6;
+				var positions = [];
+				for (var p = 0; p < n; p++) {
+					var y = centerY + (p - (n - 1) / 2) * spacing;
+					positions.push(y);
 					if (cursorY !== null) {
 						var dd = Math.abs(cursorY - y);
 						if (dd < nearestD) {
@@ -1435,13 +1442,13 @@ window.__ModuleLoader__.load({
 					}
 				}
 				var tipIdx = focusIdx >= 0 ? focusIdx : nearest;
-				for (var i = 0; i < jumpEntries.length; i++) {
+				for (var i = 0; i < n; i++) {
 					var entry = jumpEntries[i];
-					var top = railTop + entry.pct * (railHeight - 12) + 6;
-					var size = 4;
+					var top = positions[i];
+					var size = 5;
 					if (cursorY !== null) {
 						var dist = Math.abs(cursorY - top);
-						size = 4 + 7 * Math.exp(-(dist * dist) / (2 * 70 * 70));
+						size = 4 + 7 * Math.exp(-(dist * dist) / (2 * 50 * 50));
 					}
 					var isTip = i === tipIdx;
 					children.push(
