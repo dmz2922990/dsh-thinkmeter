@@ -544,6 +544,32 @@ window.__ModuleLoader__.load({
 			return null;
 		}
 
+		/**
+		 * Error boundary around RoundView: a crash inside the card (official
+		 * DisclosureRow / MarkdownText / delegated tool cards) degrades to the
+		 * plain think meter instead of abdicating the whole entry (which would
+		 * hide the fold card AND every grouped tool call).
+		 */
+		class SafeRoundBoundary extends React.Component {
+			constructor(props) {
+				super(props);
+				this.state = { failed: false };
+			}
+			static getDerivedStateFromError() {
+				return { failed: true };
+			}
+			componentDidCatch(error) {
+				console.error("[thinkmeter] RoundView render error:", error);
+			}
+			render() {
+				if (this.state.failed) {
+					var fb = this.props.fallback;
+					return fb === undefined ? null : fb();
+				}
+				return this.props.children;
+			}
+		}
+
 		/** One round entry, shared by the assistant-step and tool-call seats. */
 		function RoundEntry(props) {
 			var node = props.node;
@@ -588,7 +614,14 @@ window.__ModuleLoader__.load({
 				if (!run.first) {
 					return hiddenMarker();
 				}
-				return React.createElement(RoundView, { props: props, run: run });
+				var fallback = function () {
+					return node.kind === "assistant-step" ? AssistantStep(props) : hiddenMarker();
+				};
+				return React.createElement(
+					SafeRoundBoundary,
+					{ fallback: fallback },
+					React.createElement(RoundView, { props: props, run: run }),
+				);
 			} catch (e) {
 				console.error("[thinkmeter] RoundEntry render error:", e);
 				if (node.kind === "assistant-step") return AssistantStep(props);
