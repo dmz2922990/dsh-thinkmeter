@@ -818,7 +818,9 @@ window.__ModuleLoader__.load({
 			// chronological order (think -> tools).
 			if (isOpen && run.count > 0) {
 				// Tool members delegate to the SHIPPED renderer (its toolview
-				// child slot goes through our registry-backed dispatch).
+				// child slot goes through our registry-backed dispatch). Each
+				// card gets its own error boundary: one failing card degrades
+				// to nothing instead of taking the whole fold card down.
 				var shipped = findShippedToolComponent();
 				var kit = kitOf(propsSource);
 				for (var i = 0; i < run.nodes.length; i++) {
@@ -826,12 +828,17 @@ window.__ModuleLoader__.load({
 					if (n.kind !== "tool-call") continue;
 					if (shipped !== null) {
 						var delegatedProps = Object.assign({}, propsSource, {
+							node: n,
 							renderSlot: function (key, owner, opts) {
 								return dispatchSlot(key, owner, opts, kit);
 							},
 						});
 						children.push(
-							React.createElement(shipped, Object.assign({}, delegatedProps, { key: n.key, node: n })),
+							React.createElement(
+								SafeRoundBoundary,
+								{ key: n.key, fallback: function () { return null; } },
+								React.createElement(shipped, delegatedProps),
+							),
 						);
 					}
 				}
