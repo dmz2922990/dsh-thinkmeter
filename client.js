@@ -1423,18 +1423,22 @@ window.__ModuleLoader__.load({
 				// rail's vertical center (uniform spacing); only the SIZE peaks
 				// at the cursor and decays away from it.
 				var n = jumpEntries.length;
-				var spacing = Math.min(14, Math.max(6, (railHeight - 20) / Math.max(1, n - 1 || 1)));
-				var centerY = railTop + railHeight / 2;
+				// Rail-LOCAL coordinates for style.top (the rail itself is
+				// fixed-positioned, so viewport coords would double-offset).
+				var centerYLocal = railHeight / 2;
+				// Anchor the cluster's BOTTOM at the lowest idle dot, growing up.
+				var anchorLocal = centerYLocal + 9;
+				var spacing = Math.min(14, Math.max(6, anchorLocal / Math.max(1, n - 1 || 1)));
 				var tipEntry = null;
 				var tipTop = 0;
 				var nearest = -1;
 				var nearestD = Infinity;
 				var positions = [];
 				for (var p = 0; p < n; p++) {
-					var y = centerY + (p - (n - 1) / 2) * spacing;
-					positions.push(y);
+					var localY = anchorLocal - (n - 1 - p) * spacing;
+					positions.push(localY);
 					if (cursorY !== null) {
-						var dd = Math.abs(cursorY - y);
+						var dd = Math.abs(cursorY - (railTop + localY));
 						if (dd < nearestD) {
 							nearestD = dd;
 							nearest = p;
@@ -1444,10 +1448,10 @@ window.__ModuleLoader__.load({
 				var tipIdx = focusIdx >= 0 ? focusIdx : nearest;
 				for (var i = 0; i < n; i++) {
 					var entry = jumpEntries[i];
-					var top = positions[i];
+					var top = positions[i]; // rail-local for style.top
 					var size = 5;
 					if (cursorY !== null) {
-						var dist = Math.abs(cursorY - top);
+						var dist = Math.abs(cursorY - (railTop + top));
 						size = 4 + 7 * Math.exp(-(dist * dist) / (2 * 50 * 50));
 					}
 					var isTip = i === tipIdx;
@@ -1465,7 +1469,7 @@ window.__ModuleLoader__.load({
 					);
 					if (isTip) {
 						tipEntry = entry;
-						tipTop = top;
+						tipTop = railTop + top; // viewport for the fixed tip
 					}
 				}
 				if (tipEntry !== null) {
