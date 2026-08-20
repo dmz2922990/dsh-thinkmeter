@@ -553,7 +553,12 @@ window.__ModuleLoader__.load({
 			// first-of-run and non-first across renders, and React requires a
 			// stable hook count.
 			var run = useSession(function (snapshot) {
-				return roundRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
+				try {
+					return roundRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
+				} catch (e) {
+					console.error("[thinkmeter] roundRunOf error:", e);
+					return null;
+				}
 			});
 			var state = React.useState(false);
 			var bump = state[1];
@@ -571,18 +576,24 @@ window.__ModuleLoader__.load({
 				},
 				[],
 			);
-			if (run === null) {
-				// Outside every round: plain per-node rendering.
+			try {
+				if (run === null) {
+					// Outside every round: plain per-node rendering.
+					if (node.kind === "assistant-step") return AssistantStep(props);
+					return null;
+				}
+				// Hidden members render a marker element; the :has() CSS rule below
+				// removes the whole flow wrapper from layout (flex gap included),
+				// independent of :empty support.
+				if (!run.first) {
+					return hiddenMarker();
+				}
+				return React.createElement(RoundView, { props: props, run: run });
+			} catch (e) {
+				console.error("[thinkmeter] RoundEntry render error:", e);
 				if (node.kind === "assistant-step") return AssistantStep(props);
 				return null;
 			}
-			// Hidden members render a marker element; the :has() CSS rule below
-			// removes the whole flow wrapper from layout (flex gap included),
-			// independent of :empty support.
-			if (!run.first) {
-				return hiddenMarker();
-			}
-			return React.createElement(RoundView, { props: props, run: run });
 		}
 
 		/** Layout-invisible marker rendered by hidden round members. */
