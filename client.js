@@ -377,7 +377,7 @@ window.__ModuleLoader__.load({
 				var e = entries[i];
 				if (e === undefined || e === null || e.component === undefined) continue;
 				if (want !== undefined && e.options !== undefined && e.options.key !== want) continue;
-				var childKit = Object.assign({}, kit, {
+				var childKit = Object.assign({}, kit, buildInjectProps(e), {
 					renderSlot: function (childKey, childOwner, childOpts) {
 						var declared = e.children !== undefined ? e.children[childKey] : undefined;
 						if (declared === undefined) {
@@ -522,7 +522,44 @@ window.__ModuleLoader__.load({
 			};
 		}
 
-		/** The shipped tool-call renderer shadowed by ours (same slot, priority 0). */
+		/** Build a React selector hook over one HostObservable source. */
+		function makeSelectorHook(obs) {
+			return function (selector) {
+				var sel = typeof selector === "function" ? selector : function (v) {
+					return v;
+				};
+				var state = React.useState(function () {
+					return obs !== undefined && obs !== null ? sel(obs.getSnapshot()) : undefined;
+				});
+				var value = state[0];
+				var setValue = state[1];
+				React.useEffect(
+					function () {
+						if (obs === undefined || obs === null) return;
+						var fn = function () {
+							setValue(sel(obs.getSnapshot()));
+						};
+						var dispose = obs.subscribe(fn);
+						fn();
+						return function () {
+							if (typeof dispose === "function") dispose();
+						};
+					},
+					[],
+				);
+				return value;
+			};
+		}
+
+		/**
+		 * The shipped tool-call renderer shadowed by ours (same slot, priority
+		 * 0), plus the inject compartment props its entry declares (plain
+		 * members + `hooks` sources that the framework binds as `useXxx`
+		 * selector-hook props — e.g. useHostDescription — when the SHIPPED
+		 * entry renders; our delegation must supply them too).
+		 */
+		var shippedToolCache = { entry: null, component: null, injectProps: null };
+
 		function findShippedToolComponent() {
 			var slots = slotsRef;
 			if (slots === null || typeof slots.entries !== "function") return null;
@@ -537,11 +574,62 @@ window.__ModuleLoader__.load({
 						e.options.key === "tool-call" &&
 						e.component !== RoundEntry
 					) {
-						return e.component;
+						if (shippedToolCache.entry !== e) {
+							shippedToolCache = {
+								entry: e,
+								component: e.component,
+								injectProps: buildInjectProps(e),
+							};
+						}
+						return shippedToolCache.component;
 					}
 				}
 			} catch (err) {}
 			return null;
+		}
+
+		/** Resolve one entry's inject compartment into concrete props (cached per entry). */
+		var injectPropsCache = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+
+		function buildInjectProps(entry) {
+			if (injectPropsCache !== null) {
+				var cached = injectPropsCache.get(entry);
+				if (cached !== undefined) return cached;
+			}
+			var out = buildInjectPropsUncached(entry);
+			if (injectPropsCache !== null) {
+				try {
+					injectPropsCache.set(entry, out);
+				} catch (e) {}
+			}
+			return out;
+		}
+
+		function buildInjectPropsUncached(entry) {
+			var out = {};
+			try {
+				if (entry === null || entry === undefined || typeof entry.inject !== "function") return out;
+				var compartment = entry.inject();
+				if (compartment === null || compartment === undefined || typeof compartment !== "object") return out;
+				for (var name in compartment) {
+					if (!Object.prototype.hasOwnProperty.call(compartment, name)) continue;
+					if (name === "hooks") continue;
+					out[name] = compartment[name];
+				}
+				var hooks = compartment.hooks;
+				if (hooks !== null && hooks !== undefined && typeof hooks === "object") {
+					for (var hookName in hooks) {
+						if (!Object.prototype.hasOwnProperty.call(hooks, hookName)) continue;
+						var obs = hooks[hookName];
+						if (obs === null || obs === undefined) continue;
+						var prop = "use" + hookName.charAt(0).toUpperCase() + hookName.slice(1);
+						out[prop] = makeSelectorHook(obs);
+					}
+				}
+			} catch (err) {
+				console.error("[thinkmeter] buildInjectProps error:", err);
+			}
+			return out;
 		}
 
 		/**
@@ -828,7 +916,7 @@ window.__ModuleLoader__.load({
 					if (n.kind !== "tool-call") continue;
 					if (shipped !== null) {
 						var cardName = (n.data !== undefined && n.data !== null && n.data.root !== undefined && n.data.root !== null && n.data.root.name) || "tool";
-						var delegatedProps = Object.assign({}, propsSource, {
+						var delegatedProps = Object.assign({}, propsSource, shippedToolCache.injectProps, {
 							node: n,
 							renderSlot: function (key, owner, opts) {
 								return dispatchSlot(key, owner, opts, kit);
