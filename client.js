@@ -647,9 +647,6 @@ window.__ModuleLoader__.load({
 			var thinkState = React.useState(false);
 			var thinkOpen = thinkState[0];
 			var setThinkOpen = thinkState[1];
-			var toolState = React.useState(false);
-			var toolBlocksOpen = toolState[0];
-			var setToolBlocksOpen = toolState[1];
 			// Live ticker while the anchor step is running: keeps the elapsed
 			// seconds and the streamed token estimate updating in the header.
 			var tickState = React.useState(0);
@@ -725,7 +722,6 @@ window.__ModuleLoader__.load({
 				var blocks = Array.isArray(anchorData !== undefined && anchorData !== null ? anchorData.blocks : []) ? anchorData.blocks : [];
 				var outputs = [];
 				var answers = [];
-				var toolBlocks = [];
 				for (var b = 0; b < blocks.length; b++) {
 					var block = blocks[b];
 					if (block === undefined || block === null) continue;
@@ -734,8 +730,6 @@ window.__ModuleLoader__.load({
 					} else if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
 						var answer = renderTextBlock("ans" + b, block.text.replace(/^\n+/, ""), false);
 						if (answer !== null) answers.push(answer);
-					} else if (block.kind === "tool-call") {
-						toolBlocks.push(block);
 					}
 				}
 				// Reasoning disclosure — the OFFICIAL think row (DisclosureRow +
@@ -815,61 +809,6 @@ window.__ModuleLoader__.load({
 							),
 						);
 					}
-				}
-				// Tool-call block disclosure: only when the round has no separate
-				// tool nodes (those already render official cards on expansion),
-				// to avoid double-drawing the same calls.
-				if (toolBlocks.length > 0 && run.count === 0) {
-					var toolBlockEls = [];
-					var shippedBlocks = findShippedToolComponent();
-					var kitBlocks = kitOf(propsSource);
-					for (var tb = 0; tb < toolBlocks.length; tb++) {
-						var block2 = toolBlocks[tb];
-						if (shippedBlocks !== null) {
-							var delegatedProps2 = Object.assign({}, propsSource, {
-								node: { data: { root: block2 } },
-								renderSlot: function (key, owner, opts) {
-									return dispatchSlot(key, owner, opts, kitBlocks);
-								},
-							});
-							toolBlockEls.push(
-								React.createElement(shippedBlocks, Object.assign({}, delegatedProps2, { key: "tb" + tb })),
-							);
-						}
-					}
-					children.push(
-						React.createElement(
-							"div",
-							{ key: "toolblocks", className: "tkgrp-think" },
-							React.createElement(
-								"div",
-								{
-									className: "tkgrp-outrow",
-									role: "button",
-									tabIndex: 0,
-									title: toolBlocksOpen ? "收起工具调用" : "展开工具调用",
-									onClick: function (e) {
-										e.stopPropagation();
-										setToolBlocksOpen(function (v) {
-											return !v;
-										});
-									},
-									onKeyDown: function (e) {
-										if (e.key === "Enter" || e.key === " ") {
-											e.preventDefault();
-											e.stopPropagation();
-											setToolBlocksOpen(function (v) {
-												return !v;
-											});
-										}
-									},
-								},
-								React.createElement("span", { className: "tkgrp-chevron", "data-open": toolBlocksOpen || undefined }, "▸"),
-								React.createElement("span", { className: "tkgrp-outlabel" }, "工具调用 (" + toolBlocks.length + ")"),
-							),
-							toolBlocksOpen ? toolBlockEls : null,
-						),
-					);
 				}
 				for (var a = 0; a < answers.length; a++) {
 					children.push(answers[a]);
