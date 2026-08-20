@@ -827,6 +827,7 @@ window.__ModuleLoader__.load({
 					var n = run.nodes[i];
 					if (n.kind !== "tool-call") continue;
 					if (shipped !== null) {
+						var cardName = (n.data !== undefined && n.data !== null && n.data.root !== undefined && n.data.root !== null && n.data.root.name) || "tool";
 						var delegatedProps = Object.assign({}, propsSource, {
 							node: n,
 							renderSlot: function (key, owner, opts) {
@@ -836,7 +837,18 @@ window.__ModuleLoader__.load({
 						children.push(
 							React.createElement(
 								SafeRoundBoundary,
-								{ key: n.key, fallback: function () { return null; } },
+								{
+									key: n.key,
+									fallback: function (name) {
+										return function () {
+											return React.createElement(
+												"div",
+												{ className: "tkgrp-summary" },
+												"(工具卡渲染失败：" + name + ")",
+											);
+										};
+									}(cardName),
+								},
 								React.createElement(shipped, delegatedProps),
 							),
 						);
@@ -844,7 +856,7 @@ window.__ModuleLoader__.load({
 				}
 				if (shipped === null && run.count > 0) {
 					children.push(
-						React.createElement("div", { key: "fallback", className: "tkgrp-summary" }, "(原始渲染器不可用)"),
+						React.createElement("div", { key: "fallback", className: "tkgrp-summary" }, "(原始渲染器不可用 — shipped tool renderer not found)"),
 					);
 				}
 			}
