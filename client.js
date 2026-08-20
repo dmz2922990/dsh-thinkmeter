@@ -73,9 +73,12 @@ window.__ModuleLoader__.load({
 			".tkgrp-dock-btn{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);border:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:20px;padding:2px 10px}",
 			".tkgrp-dock-btn:hover{color:var(--dsw-alias-label-primary)}",
 			".tkgrp-out{color:var(--dsw-alias-label-tertiary);white-space:pre-wrap;word-break:break-word;padding:2px 0 4px 22px;font-size:14px;line-height:24px}",
-			".jk-rail{position:fixed;width:12px;pointer-events:auto;z-index:21}",
-			".jk-dot{position:absolute;left:3px;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-caption);cursor:pointer;transform:translateY(-50%);transition:width .12s ease,height .12s ease,background .12s ease}",
-			".jk-dot:hover,.jk-dot-active{width:8px;height:8px;left:2px;background:var(--dsw-alias-label-secondary)}",
+			".jk-rail{position:fixed;width:20px;pointer-events:auto;z-index:21;cursor:default}",
+			".jk-rail-active{cursor:pointer}",
+			".jk-idle{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;gap:5px;align-items:center}",
+			".jk-idle-dot{width:4px;height:4px;border-radius:50%;background:var(--dsw-alias-label-caption);opacity:.7}",
+			".jk-dot{position:absolute;left:50%;border-radius:50%;background:var(--dsw-alias-label-secondary);cursor:pointer;transform:translate(-50%,-50%)}",
+			".jk-dot-active{background:var(--dsw-alias-label-primary);box-shadow:0 0 0 1px var(--dsw-alias-bg-base)}",
 			".jk-tip{position:fixed;pointer-events:none;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:6px 10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);max-width:280px;box-shadow:var(--dsw-shadow-lv2);z-index:22}",
 			".jk-tip-text{white-space:normal;word-break:break-word;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}",
 			".tkgrp-thinkrow{padding-left:4px;min-height:24px;position:relative;overflow:hidden}",
@@ -1309,12 +1312,32 @@ window.__ModuleLoader__.load({
 		}
 
 		/** Root-scope overlay rail: dots for every user message, tip on hover, jump on click. */
+		function scrollToKey(key, behavior) {
+			var el = document.querySelector('[data-chat-anchor-key="' + key + '"]');
+			if (el !== null && typeof el.scrollIntoView === "function") {
+				el.scrollIntoView({ behavior: behavior, block: "start" });
+			}
+		}
+
+		/**
+		 * Quick-jump rail. Idle: three small dots vertically centered. Hover:
+		 * one dot per user input, magnified near the cursor (lens effect) and
+		 * shrinking progressively away from it. Wheel: steps focus to the
+		 * previous/next input and scrolls the chat there. Click jumps.
+		 */
 		function JumpRail() {
 			var tickState = React.useState(0);
 			var setTick = tickState[1];
-			var hoverState = React.useState(-1);
-			var hoverIdx = hoverState[0];
-			var setHoverIdx = hoverState[1];
+			var activeState = React.useState(false);
+			var active = activeState[0];
+			var setActive = activeState[1];
+			var cursorState = React.useState(null);
+			var cursorY = cursorState[0];
+			var setCursorY = cursorState[1];
+			var focusState = React.useState(-1);
+			var focusIdx = focusState[0];
+			var setFocusIdx = focusState[1];
+			var railRef = React.useRef(null);
 			React.useEffect(
 				function () {
 					var fn = function () {
@@ -1340,57 +1363,133 @@ window.__ModuleLoader__.load({
 				},
 				[],
 			);
+			// Non-passive wheel handler: step focus through the user inputs.
+			React.useEffect(
+				function () {
+					var el = railRef.current;
+					if (el === null) return;
+					var onWheel = function (e) {
+						e.preventDefault();
+						var dir = e.deltaY > 0 ? 1 : -1;
+						var cur = -1;
+						// Start from the entry nearest the current scroll position.
+						if (jumpContainer !== null && jumpEntries.length > 0) {
+							var ratio = jumpContainer.scrollTop / Math.max(1, jumpContainer.scrollHeight - jumpContainer.clientHeight);
+							var best = 0;
+							var bestD = Infinity;
+							for (var i = 0; i < jumpEntries.length; i++) {
+								var d = Math.abs(jumpEntries[i].pct - ratio);
+								if (d < bestD) {
+									bestD = d;
+									best = i;
+								}
+							}
+							cur = best;
+						}
+						var next = Math.min(jumpEntries.length - 1, Math.max(0, cur + dir));
+						setFocusIdx(next);
+						if (jumpEntries[next] !== undefined) {
+							scrollToKey(jumpEntries[next].key, "auto");
+						}
+					};
+					el.addEventListener("wheel", onWheel, { passive: false });
+					return function () {
+						el.removeEventListener("wheel", onWheel);
+					};
+				},
+				[active, tickState[0]],
+			);
 			if (jumpEntries.length === 0 || jumpContainer === null) return null;
 			var rect = jumpContainer.getBoundingClientRect();
 			if (rect.height <= 0 || rect.width <= 0) return null;
 			var railTop = rect.top;
 			var railHeight = rect.height;
-			// Sit clear of the browser scrollbar: its width is the difference
-			// between the container's offset and client widths.
 			var scrollbar = Math.max(0, jumpContainer.offsetWidth - jumpContainer.clientWidth);
-			var railLeft = rect.right - scrollbar - 14;
-			var dots = [];
-			var tip = null;
-			for (var i = 0; i < jumpEntries.length; i++) {
-				var entry = jumpEntries[i];
-				var top = railTop + entry.pct * (railHeight - 10);
-				dots.push(
-					React.createElement("div", {
-						key: entry.key,
-						className: "jk-dot" + (i === hoverIdx ? " jk-dot-active" : ""),
-						style: { top: top },
-						title: "",
-						onMouseEnter: function (idx) {
-							return function () {
-								setHoverIdx(idx);
-							};
-						}(i),
-						onMouseLeave: function () {
-							setHoverIdx(-1);
-						},
-						onClick: function (key) {
-							return function () {
-								var el = document.querySelector('[data-chat-anchor-key="' + key + '"]');
-								if (el !== null && typeof el.scrollIntoView === "function") {
-									el.scrollIntoView({ behavior: "smooth", block: "start" });
-								}
-							};
-						}(entry.key),
-					}),
-				);
-				if (i === hoverIdx) {
-					tip = React.createElement(
+			var railLeft = rect.right - scrollbar - 16;
+			var children = [];
+			if (!active) {
+				// Idle: three small dots vertically centered.
+				children.push(
+					React.createElement(
 						"div",
-						{ className: "jk-tip", style: { top: top - 8, left: railLeft - 296 } },
-						React.createElement("div", { className: "jk-tip-text" }, entry.text || "(空)"),
+						{ key: "idle", className: "jk-idle" },
+						React.createElement("span", { className: "jk-idle-dot" }),
+						React.createElement("span", { className: "jk-idle-dot" }),
+						React.createElement("span", { className: "jk-idle-dot" }),
+					),
+				);
+			} else {
+				// Lens dots: size peaks at the cursor and decays away from it.
+				var tipEntry = null;
+				var tipTop = 0;
+				var nearest = -1;
+				var nearestD = Infinity;
+				for (var p = 0; p < jumpEntries.length; p++) {
+					var y = railTop + jumpEntries[p].pct * (railHeight - 12) + 6;
+					if (cursorY !== null) {
+						var dd = Math.abs(cursorY - y);
+						if (dd < nearestD) {
+							nearestD = dd;
+							nearest = p;
+						}
+					}
+				}
+				var tipIdx = focusIdx >= 0 ? focusIdx : nearest;
+				for (var i = 0; i < jumpEntries.length; i++) {
+					var entry = jumpEntries[i];
+					var top = railTop + entry.pct * (railHeight - 12) + 6;
+					var size = 4;
+					if (cursorY !== null) {
+						var dist = Math.abs(cursorY - top);
+						size = 4 + 7 * Math.exp(-(dist * dist) / (2 * 70 * 70));
+					}
+					var isTip = i === tipIdx;
+					children.push(
+						React.createElement("div", {
+							key: entry.key,
+							className: "jk-dot" + (isTip ? " jk-dot-active" : ""),
+							style: { top: top, width: size, height: size },
+							onClick: function (key) {
+								return function () {
+									scrollToKey(key, "smooth");
+								};
+							}(entry.key),
+						}),
+					);
+					if (isTip) {
+						tipEntry = entry;
+						tipTop = top;
+					}
+				}
+				if (tipEntry !== null) {
+					children.push(
+						React.createElement(
+							"div",
+							{ key: "tip", className: "jk-tip", style: { top: tipTop - 8, left: railLeft - 292 } },
+							React.createElement("div", { className: "jk-tip-text" }, tipEntry.text || "(空)"),
+						),
 					);
 				}
 			}
 			return React.createElement(
 				"div",
-				{ className: "jk-rail", style: { top: railTop, left: railLeft, height: railHeight } },
-				dots,
-				tip,
+				{
+					ref: railRef,
+					className: "jk-rail" + (active ? " jk-rail-active" : ""),
+					style: { top: railTop, left: railLeft, height: railHeight },
+					onMouseEnter: function () {
+						setActive(true);
+					},
+					onMouseLeave: function () {
+						setActive(false);
+						setCursorY(null);
+						setFocusIdx(-1);
+					},
+					onMouseMove: function (e) {
+						setCursorY(e.clientY);
+					},
+				},
+				children,
 			);
 		}
 
