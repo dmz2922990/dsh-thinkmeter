@@ -964,68 +964,60 @@ window.__ModuleLoader__.load({
 					React.createElement("span", { className: "tkgrp-summary" }, header),
 				),
 			);
-			// Tool cards (official renderer, per-card error boundary).
-			if (isOpen && run.count > 0) {
-				var shipped = findShippedToolComponent();
-				var kit = kitOf(propsSource);
-				for (var i = 0; i < run.nodes.length; i++) {
-					var n = run.nodes[i];
-					if (n.kind !== "tool-call") continue;
-					if (shipped !== null) {
-						var cardName = (n.data !== undefined && n.data !== null && n.data.root !== undefined && n.data.root !== null && n.data.root.name) || "tool";
-						var delegatedProps = Object.assign({}, propsSource, shippedToolCache.injectProps, {
-							node: n,
-							renderSlot: function (key, owner, opts) {
-								return dispatchSlot(key, owner, opts, kit);
-							},
-						});
-						children.push(
-							React.createElement(
-								SafeRoundBoundary,
-								{
-									key: n.key,
-									fallback: function (name) {
-										return function () {
-											return React.createElement(
-												"div",
-												{ className: "tkgrp-summary" },
-												"(工具卡渲染失败：" + name + ")",
-											);
-										};
-									}(cardName),
-								},
-								React.createElement(shipped, delegatedProps),
-							),
-						);
-					}
-				}
-				if (shipped === null && run.count > 0) {
+			// Members in chronological order: think members render their fold
+			// row; tool members render official cards when expanded. The
+			// absorbed tail divider's think fold comes last (after the tools).
+			var shipped = run.count > 0 ? findShippedToolComponent() : null;
+			var kit = kitOf(propsSource);
+			var foldCount = 0;
+			for (var mi = 0; mi < run.nodes.length; mi++) {
+				var member = run.nodes[mi];
+				if (member.kind === "tool-call") {
+					if (!isOpen || shipped === null) continue;
+					var cardName = (member.data !== undefined && member.data !== null && member.data.root !== undefined && member.data.root !== null && member.data.root.name) || "tool";
+					var delegatedProps = Object.assign({}, propsSource, shippedToolCache.injectProps, {
+						node: member,
+						renderSlot: function (key, owner, opts) {
+							return dispatchSlot(key, owner, opts, kit);
+						},
+					});
 					children.push(
-						React.createElement("div", { key: "fallback", className: "tkgrp-summary" }, "(原始渲染器不可用 — shipped tool renderer not found)"),
+						React.createElement(
+							SafeRoundBoundary,
+							{
+								key: member.key,
+								fallback: function (name) {
+									return function () {
+										return React.createElement(
+											"div",
+											{ className: "tkgrp-summary" },
+											"(工具卡渲染失败：" + name + ")",
+										);
+									};
+								}(cardName),
+							},
+							React.createElement(shipped, delegatedProps),
+						),
+					);
+				} else {
+					foldCount++;
+					children.push(
+						React.createElement(ThinkFold, {
+							key: "fold" + member.key,
+							data: member.data,
+							open: thinkOpen,
+							onToggle: function () {
+								setThinkOpen(function (v) {
+									return !v;
+								});
+							},
+						}),
 					);
 				}
 			}
-			// Think folds for every think member + the absorbed tail divider,
-			// rendered below the card (their text, if any, is in their own wrapper).
-			var foldEls = [];
-			for (var f = 0; f < run.nodes.length; f++) {
-				var member = run.nodes[f];
-				if (member.kind === "tool-call") continue;
-				foldEls.push(
-					React.createElement(ThinkFold, {
-						key: "fold" + member.key,
-						data: member.data,
-						open: thinkOpen,
-						onToggle: function () {
-							setThinkOpen(function (v) {
-								return !v;
-							});
-						},
-					}),
-				);
-			}
 			if (run.tail !== undefined && run.tail !== null) {
-				foldEls.push(
+				foldCount++;
+				children.push(
 					React.createElement(ThinkFold, {
 						key: "fold" + run.tail.key,
 						data: run.tail.data,
@@ -1038,10 +1030,12 @@ window.__ModuleLoader__.load({
 					}),
 				);
 			}
-			if (foldEls.length > 0) {
-				children.push(React.createElement("div", { key: "folds", className: "tkgrp-card" }, foldEls));
+			if (isOpen && run.count > 0 && shipped === null) {
+				children.push(
+					React.createElement("div", { key: "fallback", className: "tkgrp-summary" }, "(原始渲染器不可用 — shipped tool renderer not found)"),
+				);
 			}
-			var rootClass = "tkgrp-root" + (run.running || run.count > 0 || foldEls.length > 0 ? " tkgrp-card" : "");
+			var rootClass = "tkgrp-root" + (run.running || run.count > 0 || foldCount > 0 ? " tkgrp-card" : "");
 			return React.createElement(
 				"div",
 				{ className: rootClass, "data-open": (run.count > 0 && isOpen) || undefined },
