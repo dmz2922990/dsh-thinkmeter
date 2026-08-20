@@ -1413,7 +1413,11 @@ window.__ModuleLoader__.load({
 				var flow = jumpContainer.querySelector("[data-chat-flow]");
 				if (flow !== null) {
 					var fr = flow.getBoundingClientRect();
-					if (fr.height > 0) centerLocal = fr.top - railTop + fr.height / 2;
+					// The flow spans the whole scrolled CONTENT; center on the
+					// part visible inside the container's viewport.
+					var topV = Math.max(railTop, fr.top);
+					var bottomV = Math.min(railTop + railHeight, fr.top + fr.height);
+					if (bottomV > topV) centerLocal = (topV + bottomV) / 2 - railTop;
 				}
 			} catch (e) {}
 			var children = [];
