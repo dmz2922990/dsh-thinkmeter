@@ -338,17 +338,24 @@ window.__ModuleLoader__.load({
 			for (var i = 0; i < run.nodes.length; i++) {
 				if (expandedRuns.has(run.nodes[i].key)) return true;
 			}
+			if (run.tail !== undefined && run.tail !== null && expandedRuns.has(run.tail.key)) return true;
 			return false;
+		}
+
+		function runKeys(run) {
+			var keys = [run.firstKey];
+			for (var i = 0; i < run.nodes.length; i++) keys.push(run.nodes[i].key);
+			if (run.tail !== undefined && run.tail !== null) keys.push(run.tail.key);
+			return keys;
 		}
 
 		function toggleRun(run) {
 			var open = runOpen(run);
-			for (var i = 0; i < run.nodes.length; i++) {
-				if (open) expandedRuns.delete(run.nodes[i].key);
-				else expandedRuns.add(run.nodes[i].key);
+			var keys = runKeys(run);
+			for (var i = 0; i < keys.length; i++) {
+				if (open) expandedRuns.delete(keys[i]);
+				else expandedRuns.add(keys[i]);
 			}
-			if (open) expandedRuns.delete(run.firstKey);
-			else expandedRuns.add(run.firstKey);
 			for (var fn of expandListeners) {
 				try {
 					fn();
@@ -428,34 +435,59 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * Whether an assistant step carries reasoning text (a think output).
-		 * Every such step anchors its own round card; its think output text is
-		 * the always-visible divider between cards.
+		 * Node roles for the text-divider grouping model:
+		 *  - 'tool':    a tool-call node (chain member)
+		 *  - 'think':   an assistant step with reasoning and NO visible text
+		 *               (chain member; consecutive thinks merge into one card)
+		 *  - 'divider': an assistant step with visible text — the text renders
+		 *               as the always-visible divider BELOW the merged card; a
+		 *               reasoning-carrying divider's think merges into the
+		 *               chain BEFORE it (chronologically before its text)
+		 *  - null:      not groupable
 		 */
-		function hasReasoningText(node) {
-			if (node.kind !== "assistant-step") return false;
+		function nodeRoleOf(node) {
+			if (node === undefined || node === null) return null;
+			if (node.kind === "tool-call") return "tool";
+			if (node.kind !== "assistant-step") return null;
 			var data = node.data;
+			if (data === undefined || data === null) return null;
+			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
+			var hasReasoning = false;
+			var hasText = false;
+			for (var i = 0; i < blocks.length; i++) {
+				var b = blocks[i];
+				if (b === undefined || b === null) continue;
+				if (b.kind === "reasoning") hasReasoning = true;
+				else if (b.kind === "text" && typeof b.text === "string" && b.text.trim() !== "") hasText = true;
+			}
+			if (hasText) return "divider";
+			if (hasReasoning) return "think";
+			return null;
+		}
+
+		function hasReasoningBlocks(node) {
+			var data = node !== undefined && node !== null ? node.data : undefined;
 			if (data === undefined || data === null) return false;
 			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
 			for (var i = 0; i < blocks.length; i++) {
 				var b = blocks[i];
-				// A reasoning block exists even while its text is still empty
-				// (streaming start) — that is enough to anchor a live card.
-				if (b !== undefined && b !== null && b.kind === "reasoning") {
-					return true;
-				}
+				if (b !== undefined && b !== null && b.kind === "reasoning") return true;
 			}
 			return false;
 		}
 
+		function isChainNode(node) {
+			var role = nodeRoleOf(node);
+			return role === "tool" || role === "think";
+		}
+
 		/**
-		 * Round model — each think output divides the cards:
-		 *  - a reasoning assistant step anchors a round = [step, following
-		 *    tool-call nodes up to the next reasoning step];
-		 *  - tool-call nodes attach to the nearest preceding reasoning step, or
-		 *    anchor a tool-only round when no reasoning precedes them.
+		 * Text-divider grouping — every visible TEXT output divides the cards:
+		 * one card merges ALL thinks and tool calls that precede it (since the
+		 * previous text). The divider step renders only its text below the
+		 * card; its own reasoning is absorbed into that card's aggregates.
 		 */
-		function roundRunOf(nodes, selfKey) {
+		function groupRunOf(nodes, selfKey) {
 			if (nodes === undefined || nodes === null || typeof nodes.values !== "function") return null;
 			var list = sortedVisible(nodes);
 			var i = indexIn(list, selfKey);
@@ -469,56 +501,66 @@ window.__ModuleLoader__.load({
 			if (i === -1) return null;
 			var selfNode = nodes.get(selfKey);
 			if (selfNode === undefined || selfNode === null) selfNode = list[i];
-			var selfThink = hasReasoningText(selfNode);
-			var selfTool = selfNode.kind === "tool-call";
-			if (!selfThink && !selfTool) return null;
-			var anchor = i;
-			if (selfTool) {
-				// Attach to the nearest preceding reasoning step across any run
-				// of tools; otherwise anchor a tool-only round at the first tool.
-				var j = i;
-				while (j > 0 && list[j - 1].kind === "tool-call") j--;
-				if (j > 0 && hasReasoningText(list[j - 1])) anchor = j - 1;
-				else anchor = j;
+			var selfRole = nodeRoleOf(selfNode);
+			if (selfRole === null) return null;
+			if (selfRole === "divider") {
+				// Its think merges into the preceding chain, if one exists and
+				// this step carries reasoning; otherwise it renders standalone
+				// (own think fold + text).
+				var chainBefore = i > 0 && isChainNode(list[i - 1]);
+				if (chainBefore && hasReasoningBlocks(selfNode)) return { role: "divider" };
+				return { role: "solo" };
 			}
-			var s0 = anchor;
-			var e0 = s0;
-			while (e0 + 1 < list.length && list[e0 + 1].kind === "tool-call") e0++;
-			if (s0 !== i) return { first: false };
+			// Chain member (tool | think): extent of the consecutive chain.
+			var s0 = i;
+			while (s0 > 0 && isChainNode(list[s0 - 1])) s0--;
+			var e0 = i;
+			while (e0 + 1 < list.length && isChainNode(list[e0 + 1])) e0++;
+			if (s0 !== i) return { role: "member" };
+			// The divider right AFTER the chain absorbs its reasoning into us.
+			var tail = null;
+			if (e0 + 1 < list.length) {
+				var after = nodes.get(list[e0 + 1].key);
+				if (after === undefined || after === null) after = list[e0 + 1];
+				if (nodeRoleOf(after) === "divider" && hasReasoningBlocks(after)) tail = after;
+			}
+			// Read LIVE node objects by key: the cached list only provides the
+			// ORDER, while its node refs may be stale (store mutated in place).
 			var runNodes = [];
 			var anyRunning = false;
 			var toolCount = 0;
 			var thinkTokens = 0;
 			var thinkMs = 0;
-			// Read LIVE node objects by key: the cached list only provides the
-			// ORDER, while its node refs may be stale (store mutated in place),
-			// which would freeze streaming token/duration reads at their first
-			// empty values.
-			var anchorLive = nodes.get(list[s0].key);
-			if (anchorLive !== undefined && anchorLive !== null && hasReasoningText(anchorLive)) {
-				thinkTokens = thinkTokensOf(anchorLive.data);
-				thinkMs = thinkMsOf(anchorLive.data);
-				if (anchorLive.data !== undefined && anchorLive.data !== null && anchorLive.data.status === "running") anyRunning = true;
-			}
 			for (var k = s0; k <= e0; k++) {
 				var nd = nodes.get(list[k].key);
 				if (nd === undefined || nd === null) nd = list[k];
-				if (nd.kind === "tool-call") {
+				var role = nodeRoleOf(nd);
+				if (role === "tool") {
 					toolCount++;
 					var root = nd.data && nd.data.root;
 					// Settled blocks carry kind 'tool-result'; running blocks have no kind.
 					if (!(root !== undefined && root !== null && root.kind === "tool-result")) anyRunning = true;
+				} else {
+					thinkTokens += thinkTokensOf(nd.data);
+					thinkMs += thinkMsOf(nd.data);
+					if (nd.data !== undefined && nd.data !== null && nd.data.status === "running") anyRunning = true;
 				}
 				runNodes.push(nd);
 			}
+			if (tail !== null) {
+				thinkTokens += thinkTokensOf(tail.data);
+				thinkMs += thinkMsOf(tail.data);
+				if (tail.data !== undefined && tail.data !== null && tail.data.status === "running") anyRunning = true;
+			}
 			return {
-				first: true,
+				role: "first",
 				firstKey: list[s0].key,
 				count: toolCount,
 				running: anyRunning,
 				thinkTokens: thinkTokens,
 				thinkMs: thinkMs,
 				nodes: runNodes,
+				tail: tail,
 			};
 		}
 
@@ -658,6 +700,28 @@ window.__ModuleLoader__.load({
 			}
 		}
 
+		/** Divider rendering: only the step's text blocks (think merged above). */
+		function AssistantTextOnly(props) {
+			var data = props.node !== undefined && props.node !== null ? props.node.data : undefined;
+			if (data === undefined || data === null) return null;
+			var blocks = Array.isArray(data.blocks) ? data.blocks : [];
+			var running = data.status === "running";
+			var children = [];
+			for (var i = 0; i < blocks.length; i++) {
+				var block = blocks[i];
+				if (block === undefined || block === null) continue;
+				if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
+					var el = renderTextBlock("t" + i, block.text.replace(/^\n+/, ""), running);
+					if (el !== null) children.push(el);
+				}
+			}
+			if (data.status === "interrupted") {
+				children.push(React.createElement("span", { key: "stopped", className: "tkcnt-stopped" }, "Stopped"));
+			}
+			if (children.length === 0) return null;
+			return React.createElement("div", { className: "tkcnt-root", "data-streaming": running || undefined }, children);
+		}
+
 		/** One round entry, shared by the assistant-step and tool-call seats. */
 		function RoundEntry(props) {
 			var node = props.node;
@@ -668,7 +732,7 @@ window.__ModuleLoader__.load({
 			// stable hook count.
 			var run = useSession(function (snapshot) {
 				try {
-					return roundRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
+					return groupRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
 				} catch (e) {
 					console.error("[thinkmeter] roundRunOf error:", e);
 					return null;
@@ -692,15 +756,22 @@ window.__ModuleLoader__.load({
 			);
 			try {
 				if (run === null) {
-					// Outside every round: plain per-node rendering.
+					// Not groupable: plain per-node rendering.
 					if (node.kind === "assistant-step") return AssistantStep(props);
 					return null;
 				}
-				// Hidden members render a marker element; the :has() CSS rule below
-				// removes the whole flow wrapper from layout (flex gap included),
-				// independent of :empty support.
-				if (!run.first) {
+				// Hidden chain members render a marker element; the :has() CSS
+				// rule removes the whole flow wrapper from layout.
+				if (run.role === "member") {
 					return hiddenMarker();
+				}
+				// Divider: its think merged into the card above — render text only.
+				if (run.role === "divider") {
+					return AssistantTextOnly(props);
+				}
+				// Standalone divider (no chain above to merge into): think + text.
+				if (run.role === "solo") {
+					return AssistantStep(props);
 				}
 				var fallback = function () {
 					return node.kind === "assistant-step" ? AssistantStep(props) : hiddenMarker();
@@ -722,29 +793,88 @@ window.__ModuleLoader__.load({
 			return React.createElement("div", { className: "tkgrp-hidden", style: { display: "none" } });
 		}
 
+		/** One reasoning section of a card (official DisclosureRow fold). */
+		function ThinkFold(props) {
+			var data = props.data;
+			var open = props.open;
+			var onToggle = props.onToggle;
+			var blocks = data !== undefined && data !== null && Array.isArray(data.blocks) ? data.blocks : [];
+			var outputs = [];
+			for (var b = 0; b < blocks.length; b++) {
+				var block = blocks[b];
+				if (block !== undefined && block !== null && block.kind === "reasoning" && typeof block.text === "string" && block.text.trim() !== "") {
+					outputs.push(block.text.replace(/^\n+/, ""));
+				}
+			}
+			if (outputs.length === 0) return null;
+			var thinkChildren = [];
+			for (var o = 0; o < outputs.length; o++) {
+				thinkChildren.push(React.createElement("div", { key: "out" + o, className: "tkgrp-out" }, outputs[o]));
+			}
+			var thinkRunning = data !== undefined && data !== null && data.status === "running";
+			var summaryLine = thinkRunning ? latestLine(outputs[outputs.length - 1]) : firstLine(outputs[outputs.length - 1]);
+			var prims = getPrimitives();
+			if (prims !== null && prims.DisclosureRow !== undefined) {
+				return React.createElement(
+					"div",
+					{ className: "tkgrp-think", "data-state": thinkRunning ? "running" : "ok" },
+					React.createElement(prims.DisclosureRow, {
+						rowClassName: "tkgrp-thinkrow",
+						leadingClassName: "tkgrp-thinkleading",
+						titleClassName: "tkgrp-thinktitle",
+						chevronClassName: "tkgrp-thinkchevron",
+						icon: React.createElement(prims.IconThinkOutline14, { size: 14 }),
+						title: "Think",
+						open: open,
+						expandable: true,
+						expandOnRowClick: true,
+						onToggle: onToggle,
+						collapsedContent: React.createElement("span", {
+							className: "tkgrp-think-summary",
+							"data-follow-end": thinkRunning || undefined,
+						}, summaryLine),
+					}, thinkChildren),
+				);
+			}
+			return React.createElement(
+				"div",
+				{ className: "tkgrp-think", "data-state": thinkRunning ? "running" : "ok" },
+				React.createElement(
+					"div",
+					{
+						className: "tkgrp-outrow",
+						role: "button",
+						tabIndex: 0,
+						onClick: function (e) {
+							e.stopPropagation();
+							onToggle();
+						},
+					},
+					React.createElement("span", { className: "tkgrp-chevron", "data-open": open || undefined }, "▸"),
+					React.createElement("span", { className: "tkgrp-outlabel" }, "Think"),
+				),
+				open ? thinkChildren : null,
+			);
+		}
+
 		/**
-		 * One round: collapsed card (Think summary + tool count) on top; the
-		 * anchor step's text blocks are the always-visible divider, while its
-		 * reasoning and tool-call blocks fold into disclosures (official
-		 * components inside).
+		 * One merged card: everything (thinks + tool calls) since the previous
+		 * text output. The divider step's own text renders BELOW the card in
+		 * its own wrapper (see the 'divider' role in RoundEntry).
 		 */
 		function RoundView(props) {
 			var run = props.run;
 			var propsSource = props.props;
-			// Disclosures, collapsed by default.
+			// Shared disclosure state for the card's think folds.
 			var thinkState = React.useState(false);
 			var thinkOpen = thinkState[0];
 			var setThinkOpen = thinkState[1];
-			// Live ticker while the anchor step is running: keeps the elapsed
-			// seconds and the streamed token estimate updating in the header.
+			// Live ticker while anything in the chain is running.
 			var tickState = React.useState(0);
 			var setTick = tickState[1];
-			var anchor = run.nodes[0];
-			var anchorData = anchor !== undefined && anchor !== null ? anchor.data : undefined;
-			var running = anchorData !== undefined && anchorData !== null && anchorData.status === "running";
 			React.useEffect(
 				function () {
-					if (!running) return;
+					if (!run.running) return;
 					var id = setInterval(function () {
 						setTick(function (v) {
 							return v + 1;
@@ -754,161 +884,88 @@ window.__ModuleLoader__.load({
 						clearInterval(id);
 					};
 				},
-				[running],
+				[run.running],
 			);
 			var isOpen = runOpen(run);
-			// Live header values while running: elapsed wall-clock seconds and
-			// the reasoning-text estimate (usage is only reported on settle).
-			var liveSecs = running && typeof anchorData.time === "number" ? (Date.now() - anchorData.time) / 1000 : null;
-			var headerTokens = running ? thinkTokensOf(anchorData) : run.thinkTokens;
-			var headerMs = running && liveSecs !== null ? liveSecs * 1000 : run.thinkMs;
+			// Live header values while running: the freshest running member's
+			// wall-clock seconds + streamed estimate on top of the settled sum.
+			var liveNode = null;
+			if (run.running) {
+				for (var m = run.nodes.length - 1; m >= 0; m--) {
+					var cand = run.nodes[m];
+					if (cand.kind !== "tool-call" && cand.data !== undefined && cand.data !== null && cand.data.status === "running") {
+						liveNode = cand;
+						break;
+					}
+				}
+				if (liveNode === null && run.tail !== undefined && run.tail !== null && run.tail.data !== undefined && run.tail.data !== null && run.tail.data.status === "running") {
+					liveNode = run.tail;
+				}
+			}
+			// Header aggregates: settled members contribute exact values; the
+			// running member contributes a live estimate + wall-clock seconds.
+			var headerTokens = 0;
+			var headerMs = 0;
+			for (var m2 = 0; m2 < run.nodes.length; m2++) {
+				var node2 = run.nodes[m2];
+				if (node2.kind === "tool-call") continue;
+				headerTokens += thinkTokensOf(node2.data);
+				if (node2 === liveNode && typeof node2.data.time === "number") {
+					var s2 = (Date.now() - node2.data.time) / 1000;
+					if (s2 > 0) headerMs += s2 * 1000;
+				} else {
+					headerMs += thinkMsOf(node2.data);
+				}
+			}
+			if (run.tail !== undefined && run.tail !== null) {
+				headerTokens += thinkTokensOf(run.tail.data);
+				if (run.tail === liveNode && typeof run.tail.data.time === "number") {
+					var s3 = (Date.now() - run.tail.data.time) / 1000;
+					if (s3 > 0) headerMs += s3 * 1000;
+				} else {
+					headerMs += thinkMsOf(run.tail.data);
+				}
+			}
+			var headerRunning = run.running;
 			// Header: [Think duration & tokens, tool-call count]
 			var parts = [];
 			if (headerTokens > 0) {
-				var duration = running ? (Math.round(headerMs / 100) / 10).toFixed(1) + "s" : fmtDuration(run.thinkMs);
-				parts.push("Think" + (duration !== "" ? " " + duration : "") + " · " + fmt(headerTokens) + " tokens");
+				var duration = headerRunning && headerMs > 0 ? (Math.round(headerMs / 100) / 10).toFixed(1) + "s" : fmtDuration(headerMs);
+				parts.push("Think" + (duration !== "" ? " " + duration : "") + " · " + fmt(Math.round(headerTokens)) + " tokens");
 			}
 			if (run.count > 0) parts.push(run.count + " 次工具调用");
 			if (parts.length === 0) parts.push("运行中");
-			var header = parts.join("，") + (run.running ? " · 运行中" : "");
+			var header = parts.join("，") + (headerRunning ? " · 运行中" : "");
 			var children = [];
-			// The card renders while running (immediate, live header) and for
-			// every tool-bearing round; a settled think-only round (final
-			// answer) renders the fold + text without a card.
-			if (running || run.count > 0) {
-				children.push(
-					React.createElement(
-						"div",
-						{
-							key: "head",
-							className: "tkgrp-row",
-							"data-state": run.running ? "running" : "ok",
-							role: "button",
-							tabIndex: 0,
-							title: isOpen ? "点击折叠" : "点击展开原始工具卡片",
-							onClick: function (e) {
+			children.push(
+				React.createElement(
+					"div",
+					{
+						key: "head",
+						className: "tkgrp-row",
+						"data-state": headerRunning ? "running" : "ok",
+						role: "button",
+						tabIndex: 0,
+						title: isOpen ? "点击折叠" : "点击展开工具卡片",
+						onClick: function (e) {
+							e.stopPropagation();
+							toggleRun(run);
+						},
+						onKeyDown: function (e) {
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
 								e.stopPropagation();
 								toggleRun(run);
-							},
-							onKeyDown: function (e) {
-								if (e.key === "Enter" || e.key === " ") {
-									e.preventDefault();
-									e.stopPropagation();
-									toggleRun(run);
-								}
-							},
+							}
 						},
-						React.createElement("span", { className: "tkgrp-chevron", "data-open": isOpen || undefined }, "▸"),
-						React.createElement("span", { className: "tkgrp-title" }, "Tool calls"),
-						React.createElement("span", { className: "tkgrp-summary" }, header),
-					),
-				);
-			}
-			// Per-block handling of the anchor step: text blocks are the visible
-			// divider; reasoning and tool-call blocks fold into disclosures.
-			if (hasReasoningText(anchor)) {
-				var blocks = Array.isArray(anchorData !== undefined && anchorData !== null ? anchorData.blocks : []) ? anchorData.blocks : [];
-				var outputs = [];
-				var answers = [];
-				for (var b = 0; b < blocks.length; b++) {
-					var block = blocks[b];
-					if (block === undefined || block === null) continue;
-					if (block.kind === "reasoning" && typeof block.text === "string" && block.text.trim() !== "") {
-						outputs.push(block.text.replace(/^\n+/, ""));
-					} else if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
-						var answer = renderTextBlock("ans" + b, block.text.replace(/^\n+/, ""), false);
-						if (answer !== null) answers.push(answer);
-					}
-				}
-				// Reasoning disclosure — the OFFICIAL think row (DisclosureRow +
-				// Think icon, same component family as the shipped ReasoningRow).
-				// While the step is running, the collapsed row streams the latest
-				// reasoning line with a sweep animation (shipped behavior).
-				if (outputs.length > 0) {
-					var thinkChildren = [];
-					for (var o = 0; o < outputs.length; o++) {
-						thinkChildren.push(
-							React.createElement("div", { key: "out" + o, className: "tkgrp-out" }, outputs[o]),
-						);
-					}
-					var thinkRunning = anchorData !== undefined && anchorData !== null && anchorData.status === "running";
-					var thinkText = outputs[outputs.length - 1];
-					var summaryLine = thinkRunning ? latestLine(thinkText) : firstLine(thinkText);
-					var prims = getPrimitives();
-					if (prims !== null && prims.DisclosureRow !== undefined) {
-						children.push(
-							React.createElement(
-								"div",
-								{ key: "think", className: "tkgrp-think", "data-state": thinkRunning ? "running" : "ok" },
-								React.createElement(prims.DisclosureRow, {
-									rowClassName: "tkgrp-thinkrow",
-									leadingClassName: "tkgrp-thinkleading",
-									titleClassName: "tkgrp-thinktitle",
-									chevronClassName: "tkgrp-thinkchevron",
-									icon: React.createElement(prims.IconThinkOutline14, { size: 14 }),
-									title: "Think",
-									open: thinkOpen,
-									expandable: true,
-									expandOnRowClick: true,
-									onToggle: function () {
-										setThinkOpen(function (v) {
-											return !v;
-										});
-									},
-									collapsedContent: React.createElement("span", {
-										className: "tkgrp-think-summary",
-										"data-follow-end": thinkRunning || undefined,
-									}, summaryLine),
-								}, thinkChildren),
-							),
-						);
-					} else {
-						children.push(
-							React.createElement(
-								"div",
-								{ key: "think", className: "tkgrp-think" },
-								React.createElement(
-									"div",
-									{
-										className: "tkgrp-outrow",
-										role: "button",
-										tabIndex: 0,
-										title: thinkOpen ? "收起思考输出" : "展开思考输出",
-										onClick: function (e) {
-											e.stopPropagation();
-											setThinkOpen(function (v) {
-												return !v;
-											});
-										},
-										onKeyDown: function (e) {
-											if (e.key === "Enter" || e.key === " ") {
-												e.preventDefault();
-												e.stopPropagation();
-												setThinkOpen(function (v) {
-													return !v;
-												});
-											}
-										},
-									},
-									React.createElement("span", { className: "tkgrp-chevron", "data-open": thinkOpen || undefined }, "▸"),
-									React.createElement("span", { className: "tkgrp-outlabel" }, "思考输出"),
-								),
-								thinkOpen ? thinkChildren : null,
-							),
-						);
-					}
-				}
-				for (var a = 0; a < answers.length; a++) {
-					children.push(answers[a]);
-				}
-			}
-			// Tool cards come AFTER the think fold and text, matching the
-			// chronological order (think -> tools).
+					},
+					React.createElement("span", { className: "tkgrp-chevron", "data-open": isOpen || undefined }, "▸"),
+					React.createElement("span", { className: "tkgrp-title" }, "Tool calls"),
+					React.createElement("span", { className: "tkgrp-summary" }, header),
+				),
+			);
+			// Tool cards (official renderer, per-card error boundary).
 			if (isOpen && run.count > 0) {
-				// Tool members delegate to the SHIPPED renderer (its toolview
-				// child slot goes through our registry-backed dispatch). Each
-				// card gets its own error boundary: one failing card degrades
-				// to nothing instead of taking the whole fold card down.
 				var shipped = findShippedToolComponent();
 				var kit = kitOf(propsSource);
 				for (var i = 0; i < run.nodes.length; i++) {
@@ -948,10 +1005,46 @@ window.__ModuleLoader__.load({
 					);
 				}
 			}
-			var rootClass = "tkgrp-root" + (running || run.count > 0 ? " tkgrp-card" : "");
+			// Think folds for every think member + the absorbed tail divider,
+			// rendered below the card (their text, if any, is in their own wrapper).
+			var foldEls = [];
+			for (var f = 0; f < run.nodes.length; f++) {
+				var member = run.nodes[f];
+				if (member.kind === "tool-call") continue;
+				foldEls.push(
+					React.createElement(ThinkFold, {
+						key: "fold" + member.key,
+						data: member.data,
+						open: thinkOpen,
+						onToggle: function () {
+							setThinkOpen(function (v) {
+								return !v;
+							});
+						},
+					}),
+				);
+			}
+			if (run.tail !== undefined && run.tail !== null) {
+				foldEls.push(
+					React.createElement(ThinkFold, {
+						key: "fold" + run.tail.key,
+						data: run.tail.data,
+						open: thinkOpen,
+						onToggle: function () {
+							setThinkOpen(function (v) {
+								return !v;
+							});
+						},
+					}),
+				);
+			}
+			if (foldEls.length > 0) {
+				children.push(React.createElement("div", { key: "folds", className: "tkgrp-card" }, foldEls));
+			}
+			var rootClass = "tkgrp-root" + (run.running || run.count > 0 || foldEls.length > 0 ? " tkgrp-card" : "");
 			return React.createElement(
 				"div",
-				{ className: rootClass, "data-open": isOpen || undefined },
+				{ className: rootClass, "data-open": (run.count > 0 && isOpen) || undefined },
 				children,
 			);
 		}
