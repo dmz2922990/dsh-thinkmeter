@@ -47,7 +47,7 @@ window.__ModuleLoader__.load({
 			".tkset-toggle.is-on{background:var(--dsw-alias-state-success-primary,#3ba272)}",
 			".tkset-knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:8px;background:var(--dsw-alias-bg-base,#fff);transition:left .15s ease}",
 			".tkset-toggle.is-on .tkset-knob{left:18px}",
-			".tkver-row{color:var(--dsw-alias-label-caption);font-size:12px;line-height:18px;padding:16px 0 4px;text-align:center}",
+			".tkver-row{color:var(--dsw-alias-label-caption);font-size:12px;line-height:18px;padding:20px 16px 8px 0;text-align:right}",
 			// tool call group
 			".tkgrp-root{display:flex;flex-direction:column}",
 			".tkgrp-root[data-open]{border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px 12px 4px;background:var(--dsw-alias-bg-base);margin:4px 0 4px 4px}",
