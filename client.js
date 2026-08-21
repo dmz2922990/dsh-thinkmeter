@@ -47,6 +47,7 @@ window.__ModuleLoader__.load({
 			".tkset-toggle.is-on{background:var(--dsw-alias-state-success-primary,#3ba272)}",
 			".tkset-knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:8px;background:var(--dsw-alias-bg-base,#fff);transition:left .15s ease}",
 			".tkset-toggle.is-on .tkset-knob{left:18px}",
+			".tkver-row{color:var(--dsw-alias-label-caption);font-size:12px;line-height:18px;padding:16px 0 4px;text-align:center}",
 			// tool call group
 			".tkgrp-root{display:flex;flex-direction:column}",
 			".tkgrp-root[data-open]{border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px 12px 4px;background:var(--dsw-alias-bg-base);margin:4px 0 4px 4px}",
@@ -701,6 +702,40 @@ window.__ModuleLoader__.load({
 				}
 				return this.props.children;
 			}
+		}
+
+		/** Settings footer: the running DSH version (served by our host half). */
+		function DshVersionRow() {
+			var state = React.useState("");
+			var version = state[0];
+			var setVersion = state[1];
+			React.useEffect(
+				function () {
+					var cancelled = false;
+					try {
+						fetch("/plugins/dsh-thinkmeter/version")
+							.then(function (r) {
+								return r.ok ? r.json() : null;
+							})
+							.then(function (data) {
+								if (!cancelled && data !== null && typeof data.version === "string") {
+									setVersion(data.version);
+								}
+							})
+							.catch(function () {});
+					} catch (e) {}
+					return function () {
+						cancelled = true;
+					};
+				},
+				[],
+			);
+			if (version === "") return null;
+			return React.createElement(
+				"div",
+				{ className: "tkver-row" },
+				"DeepSeek Harness " + version,
+			);
 		}
 
 		/** Divider rendering: only the step's text blocks (think merged above). */
@@ -1551,6 +1586,12 @@ window.__ModuleLoader__.load({
 					CollapseToolsSettingRow,
 				);
 			});
+			var disposeVersion = slots.inject("settings.general.item", function () {
+				return slots.register(
+					{ name: "settings.general.item", id: "thinkmeter-dsh-version", order: 999, label: "DSH 版本" },
+					DshVersionRow,
+				);
+			});
 
 			// Tool-call group shadow: registered only while the preference is on,
 			// so turning it off restores the shipped tool cards.
@@ -1609,6 +1650,9 @@ window.__ModuleLoader__.load({
 					} catch (e) {}
 					try {
 						disposeSettings && disposeSettings();
+					} catch (e) {}
+					try {
+						disposeVersion && disposeVersion();
 					} catch (e) {}
 					try {
 						disposeThink && disposeThink();
