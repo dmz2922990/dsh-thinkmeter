@@ -1313,9 +1313,18 @@ window.__ModuleLoader__.load({
 
 		/** Root-scope overlay rail: dots for every user message, tip on hover, jump on click. */
 		function scrollToKey(key, behavior) {
+			// Scroll ONLY the conversation container: scrollIntoView may also
+			// scroll other ancestors (even the window), visibly displacing the
+			// whole layout after a jump.
 			var el = document.querySelector('[data-chat-anchor-key="' + key + '"]');
-			if (el !== null && typeof el.scrollIntoView === "function") {
-				el.scrollIntoView({ behavior: behavior, block: "start" });
+			if (el === null || jumpContainer === null) return;
+			var cRect = jumpContainer.getBoundingClientRect();
+			var eRect = el.getBoundingClientRect();
+			var top = jumpContainer.scrollTop + (eRect.top - cRect.top) - 8;
+			if (typeof jumpContainer.scrollTo === "function") {
+				jumpContainer.scrollTo({ top: Math.max(0, top), behavior: behavior });
+			} else {
+				jumpContainer.scrollTop = Math.max(0, top);
 			}
 		}
 
