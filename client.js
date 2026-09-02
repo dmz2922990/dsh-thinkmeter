@@ -834,8 +834,15 @@ window.__ModuleLoader__.load({
 		/** One reasoning section of a card (official DisclosureRow fold). */
 		function ThinkFold(props) {
 			var data = props.data;
-			var open = props.open;
-			var onToggle = props.onToggle;
+			// Independent per-fold expansion.
+			var openState = React.useState(false);
+			var open = openState[0];
+			var setOpen = openState[1];
+			var onToggle = function () {
+				setOpen(function (v) {
+					return !v;
+				});
+			};
 			var blocks = data !== undefined && data !== null && Array.isArray(data.blocks) ? data.blocks : [];
 			var outputs = [];
 			for (var b = 0; b < blocks.length; b++) {
@@ -903,10 +910,7 @@ window.__ModuleLoader__.load({
 		function RoundView(props) {
 			var run = props.run;
 			var propsSource = props.props;
-			// Shared disclosure state for the card's think folds.
-			var thinkState = React.useState(false);
-			var thinkOpen = thinkState[0];
-			var setThinkOpen = thinkState[1];
+			// (each Think fold manages its own expansion state)
 			// Live ticker while anything in the chain is running.
 			var tickState = React.useState(0);
 			var setTick = tickState[1];
@@ -1043,12 +1047,6 @@ window.__ModuleLoader__.load({
 						React.createElement(ThinkFold, {
 							key: "fold" + member.key,
 							data: member.data,
-							open: thinkOpen,
-							onToggle: function () {
-								setThinkOpen(function (v) {
-									return !v;
-								});
-							},
 						}),
 					);
 				}
@@ -1059,12 +1057,6 @@ window.__ModuleLoader__.load({
 					React.createElement(ThinkFold, {
 						key: "fold" + run.tail.key,
 						data: run.tail.data,
-						open: thinkOpen,
-						onToggle: function () {
-							setThinkOpen(function (v) {
-								return !v;
-							});
-						},
 					}),
 				);
 			}
