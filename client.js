@@ -760,6 +760,55 @@ window.__ModuleLoader__.load({
 			return React.createElement("div", { className: "tkcnt-root", "data-streaming": running || undefined }, children);
 		}
 
+		/**
+		 * Standalone think+text step (no chain above it): a card styled like the
+		 * fold cards — official Think DisclosureRow with duration & tokens in
+		 * the summary, plus the step's text rendered below.
+		 */
+		function SoloCard(props) {
+			var node = props.node;
+			var data = node !== undefined && node !== null ? node.data : undefined;
+			// Live ticker for the running case.
+			var running = data !== undefined && data !== null && data.status === "running";
+			var tickState = React.useState(0);
+			React.useEffect(
+				function () {
+					if (!running) return;
+					var id = setInterval(function () {
+						tickState[1](function (v) {
+							return v + 1;
+						});
+					}, 500);
+					return function () {
+						clearInterval(id);
+					};
+				},
+				[running],
+			);
+			var tokens = thinkTokensOf(data);
+			var ms = thinkMsOf(data);
+			if (running && data !== undefined && data !== null && typeof data.time === "number") {
+				var secs = (Date.now() - data.time) / 1000;
+				if (ms <= 0 && secs > 0) ms = secs * 1000;
+			}
+			var meta = "Think " + (ms > 0 ? (Math.round(ms / 100) / 10).toFixed(1) + "s" : "") + " · " + fmt(Math.round(tokens)) + " tokens";
+			var children = [];
+			var fold = React.createElement(ThinkFold, { data: data, meta: meta });
+			if (fold !== null) children.push(fold);
+			var blocks = data !== undefined && data !== null && Array.isArray(data.blocks) ? data.blocks : [];
+			for (var i = 0; i < blocks.length; i++) {
+				var block = blocks[i];
+				if (block === undefined || block === null) continue;
+				if (block.kind === "text" && typeof block.text === "string" && block.text.trim() !== "") {
+					var el = renderTextBlock("t" + i, block.text.replace(/^\n+/, ""), running);
+					if (el !== null) children.push(el);
+				}
+			}
+			if (children.length === 0) return null;
+			return React.createElement("div", { className: "tkgrp-root tkgrp-card" }, children);
+		}
+
+		/** One round entry, shared by the assistant-step and tool-call seats. */
 		/** One round entry, shared by the assistant-step and tool-call seats. */
 		function RoundEntry(props) {
 			var node = props.node;
@@ -807,9 +856,10 @@ window.__ModuleLoader__.load({
 				if (run.role === "divider") {
 					return AssistantTextOnly(props);
 				}
-				// Standalone divider (no chain above to merge into): think + text.
+				// Standalone divider (no chain above to merge into): card-styled
+				// think + text, consistent with the fold cards.
 				if (run.role === "solo") {
-					return AssistantStep(props);
+					return React.createElement(SoloCard, { node: node });
 				}
 				var fallback = function () {
 					return node.kind === "assistant-step" ? AssistantStep(props) : hiddenMarker();
@@ -858,6 +908,9 @@ window.__ModuleLoader__.load({
 			}
 			var thinkRunning = data !== undefined && data !== null && data.status === "running";
 			var summaryLine = thinkRunning ? latestLine(outputs[outputs.length - 1]) : firstLine(outputs[outputs.length - 1]);
+			if (props.meta !== undefined && props.meta !== null && props.meta !== "") {
+				summaryLine = props.meta + " · " + summaryLine;
+			}
 			var prims = getPrimitives();
 			if (prims !== null && prims.DisclosureRow !== undefined) {
 				return React.createElement(
