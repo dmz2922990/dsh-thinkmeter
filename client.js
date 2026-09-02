@@ -907,10 +907,9 @@ window.__ModuleLoader__.load({
 				thinkChildren.push(React.createElement("div", { key: "out" + o, className: "tkgrp-out" }, outputs[o]));
 			}
 			var thinkRunning = data !== undefined && data !== null && data.status === "running";
-			var summaryLine = thinkRunning ? latestLine(outputs[outputs.length - 1]) : firstLine(outputs[outputs.length - 1]);
-			if (props.meta !== undefined && props.meta !== null && props.meta !== "") {
-				summaryLine = props.meta + " · " + summaryLine;
-			}
+			// Collapsed state shows ONLY the meta (duration/tokens) — never the
+			// reasoning line, so no content leaks before expanding.
+			var summaryLine = props.meta !== undefined && props.meta !== null ? props.meta : "";
 			var prims = getPrimitives();
 			if (prims !== null && prims.DisclosureRow !== undefined) {
 				return React.createElement(
