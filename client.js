@@ -792,10 +792,12 @@ window.__ModuleLoader__.load({
 				if (ms <= 0 && secs > 0) ms = secs * 1000;
 			}
 			var meta = "Think " + (ms > 0 ? (Math.round(ms / 100) / 10).toFixed(1) + "s" : "") + " · " + fmt(Math.round(tokens)) + " tokens";
-			var children = [];
 			var fold = React.createElement(ThinkFold, { data: data, meta: meta });
-			if (fold !== null) children.push(fold);
 			var blocks = data !== undefined && data !== null && Array.isArray(data.blocks) ? data.blocks : [];
+			var children = [];
+			// The think disclosure gets its OWN bordered box; the answer text
+			// renders below it as normal message text (no shared card border).
+			if (fold !== null) children.push(React.createElement("div", { key: "box", className: "tkgrp-card" }, fold));
 			for (var i = 0; i < blocks.length; i++) {
 				var block = blocks[i];
 				if (block === undefined || block === null) continue;
@@ -805,7 +807,7 @@ window.__ModuleLoader__.load({
 				}
 			}
 			if (children.length === 0) return null;
-			return React.createElement("div", { className: "tkgrp-root tkgrp-card" }, children);
+			return React.createElement("div", { className: "tkgrp-root" }, children);
 		}
 
 		/** One round entry, shared by the assistant-step and tool-call seats. */
