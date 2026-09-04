@@ -53,6 +53,8 @@ window.__ModuleLoader__.load({
 			".tkgrp-root[data-open]{border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px 12px 4px;background:var(--dsw-alias-bg-base);margin:4px 0 4px 4px}",
 			".tkgrp-card{border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:8px 12px 4px;background:var(--dsw-alias-bg-base);margin:4px 0 4px 4px}",
 			".tkgrp-card .tkgrp-row{border:none;border-radius:0;padding:0 0 6px;margin:0;background:transparent;min-width:0}",
+			".tkgrp-card:empty{display:none}",
+			".tkgrp-root[data-open]>div:empty{display:none}",
 			".tkgrp-row{display:flex;align-items:center;gap:8px;min-height:24px;font-size:14px;line-height:24px;cursor:pointer;user-select:none;position:relative;overflow:hidden;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:4px 12px;background:var(--dsw-alias-bg-base);margin:4px 0 4px 4px;width:fit-content;min-width:180px}",
 			".tkgrp-root[data-open] .tkgrp-row{border:none;border-radius:0;padding:0 0 6px;margin:0;background:transparent;min-width:0}",
 			"[data-chat-flow-kind=tool-call]:empty{display:none}",
@@ -798,6 +800,7 @@ window.__ModuleLoader__.load({
 			// The think disclosure gets its OWN bordered box; the answer text
 			// renders below it as normal message text (no shared card border).
 			if (fold !== null) children.push(React.createElement("div", { key: "box", className: "tkgrp-card" }, fold));
+			if (fold === null && blocks.length === 0) return null;
 			for (var i = 0; i < blocks.length; i++) {
 				var block = blocks[i];
 				if (block === undefined || block === null) continue;
