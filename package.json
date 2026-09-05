@@ -1,7 +1,7 @@
 {
   "name": "dsh-thinkmeter",
-  "description": "DSH client plugin: Think token-count display + optional tool-call grouping.",
-  "version": "0.8.9",
+  "description": "DSH client plugin: Think token meter + fold cards grouping thinks & tool calls between text dividers.",
+  "version": "0.9.0",
   "type": "module",
   "main": "index.js",
   "exports": {
