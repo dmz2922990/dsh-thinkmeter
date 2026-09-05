@@ -1,7 +1,7 @@
 {
   "name": "dsh-thinkmeter",
   "description": "DSH client plugin: Think token meter + fold cards grouping thinks & tool calls between text dividers.",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -12,7 +12,10 @@
   },
   "dsh": {
     "client": {
-      "platform": "web"
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
     },
     "bundle": {
       "patch": "./cordis.patch.yml"
