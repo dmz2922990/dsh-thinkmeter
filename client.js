@@ -443,8 +443,13 @@ window.__ModuleLoader__.load({
 		 *               chain BEFORE it (chronologically before its text)
 		 *  - null:      not groupable
 		 */
+		var roleDiagLogged = false;
 		function nodeRoleOf(node) {
 			if (node === undefined || node === null) return null;
+			if (!roleDiagLogged) {
+				roleDiagLogged = true;
+				console.log("[thinkmeter] first node seen:", node.kind, "blocks:", Array.isArray(node.data && node.data.blocks) ? node.data.blocks.map(function(b){return b && b.kind}).join(",") : "none");
+			}
 			if (node.kind === "tool-call") return "tool";
 			if (node.kind !== "assistant-step") return null;
 			var data = node.data;
@@ -1174,9 +1179,13 @@ window.__ModuleLoader__.load({
 
 		function apply(ctx) {
 			var slots = ctx.get("slots");
-			if (slots === undefined) return;
+			if (slots === undefined) {
+				console.warn("[thinkmeter] apply: slots service not available — plugin will not register");
+				return;
+			}
 			slotsRef = slots;
 			var disposeStyle = insertStyle();
+			console.log("[thinkmeter] v" + "0.9.1" + " loaded, slots:", typeof slots.register === "function" ? "OK" : "BROKEN");
 
 			// ThinkMeter + chain-aware tool grouping: the assistant-step shadow is
 			// always on; when the collapse preference is off it renders the plain
