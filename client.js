@@ -212,6 +212,21 @@ window.__ModuleLoader__.load({
 			return null;
 		}
 
+		var diagLogged = false;
+		function diagNodes(useSession, nodeKey) {
+			if (diagLogged) return;
+			diagLogged = true;
+			var nodes = chatNodesOf(useSession);
+			var count = 0, kinds = "";
+			if (nodes !== null) {
+				for (var n of nodes.values()) {
+					if (count < 20) kinds += n.kind + "|";
+					count++;
+				}
+			}
+			console.log("[thinkmeter] nodes found:", nodes !== null ? count : "NULL", "kinds:", kinds, "self:", nodeKey);
+		}
+
 		// ── collapse-tools preference store (localStorage-backed, in-memory notify) ──
 
 		var PREF_KEY = "dsh-thinkmeter:collapseTools";
@@ -865,6 +880,7 @@ window.__ModuleLoader__.load({
 			// stable hook count.
 			var run = useSession(function (snapshot) {
 				try {
+					diagNodes(useSession, node.key);
 					return groupRunOf(chatNodesOf(useSession), node.key);
 				} catch (e) {
 					console.error("[thinkmeter] groupRunOf error:", e);
