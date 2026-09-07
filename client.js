@@ -168,6 +168,50 @@ window.__ModuleLoader__.load({
 			return Math.max(0, timing.completedTime - timing.stepStartTime);
 		}
 
+		// ── chat data bridge (version-compat: 0.1.1 uses useSession, 0.1.2 needs uiConversation) ──
+
+		/** Chat snapshot source: { getSnapshot(): {nodes, order, ...}, subscribe(fn) } or null */
+		var chatSourceRef = null;
+		var chatSourceListeners = new Set();
+
+		function setChatSource(source) {
+			chatSourceRef = source;
+			for (var fn of [...chatSourceListeners]) {
+				try {
+					fn();
+				} catch (e) {}
+			}
+		}
+
+		/**
+		 * Read the chat nodes Map from whichever source works:
+		 *  - 0.1.1: useSession(s => s.chat.nodes)
+		 *  - 0.1.2: uiConversation.binding(sessionId).target("chat")
+		 */
+		function chatNodesOf(useSession) {
+			// Try old path first (0.1.1: session snapshot has chat.nodes)
+			if (typeof useSession === "function") {
+				try {
+					var nodes = useSession(function (s) {
+						return s && s.chat && s.chat.nodes;
+					});
+					if (nodes !== undefined && nodes !== null && typeof nodes.values === "function") {
+						return nodes;
+					}
+				} catch (e) {}
+			}
+			// New path (0.1.2: chat data via uiConversation bridge)
+			if (chatSourceRef !== null) {
+				try {
+					var snap = chatSourceRef.getSnapshot();
+					if (snap !== undefined && snap !== null && snap.nodes !== undefined && typeof snap.nodes.values === "function") {
+						return snap.nodes;
+					}
+				} catch (e) {}
+			}
+			return null;
+		}
+
 		// ── collapse-tools preference store (localStorage-backed, in-memory notify) ──
 
 		var PREF_KEY = "dsh-thinkmeter:collapseTools";
@@ -821,9 +865,9 @@ window.__ModuleLoader__.load({
 			// stable hook count.
 			var run = useSession(function (snapshot) {
 				try {
-					return groupRunOf(snapshot && snapshot.chat && snapshot.chat.nodes, node.key);
+					return groupRunOf(chatNodesOf(useSession), node.key);
 				} catch (e) {
-					console.error("[thinkmeter] roundRunOf error:", e);
+					console.error("[thinkmeter] groupRunOf error:", e);
 					return null;
 				}
 			});
@@ -1185,6 +1229,43 @@ window.__ModuleLoader__.load({
 			}
 			slotsRef = slots;
 			var disposeStyle = insertStyle();
+
+			// Resolve the chat data source for DSH ≥0.1.2 (where useSession no
+			// longer carries chat.nodes; the data lives behind uiConversation).
+			try {
+				var uiConv = ctx.get("uiConversation");
+				if (uiConv !== undefined && typeof uiConv.binding === "function") {
+					// Try the current session's binding at activation time and on
+					// each session switch; the target("chat") source is stable.
+					var resolveChatSource = function () {
+						try {
+							var sessions = ctx.get("sessions") ?? ctx.sessions;
+							var current = sessions !== undefined && typeof sessions.list !== "undefined" ? sessions.list.getSnapshot().current : undefined;
+							if (current === undefined) return;
+							var binding = uiConv.binding(current);
+							if (binding === undefined) return;
+							var source = binding.target("chat");
+							if (source !== undefined && source !== null) {
+								setChatSource(source);
+							}
+						} catch (e) {
+							console.warn("[thinkmeter] chat source resolve:", e.message);
+						}
+					};
+					resolveChatSource();
+					// Re-resolve on session changes.
+					try {
+						var sessList = ctx.sessions !== undefined ? ctx.sessions.list : undefined;
+						if (sessList !== undefined && typeof sessList.subscribe === "function") {
+							ctx.effect(function () {
+								return sessList.subscribe(resolveChatSource);
+							});
+						}
+					} catch (e) {}
+				}
+			} catch (e) {
+				console.warn("[thinkmeter] uiConversation bridge:", e.message);
+			}
 			console.log("[thinkmeter] v" + "0.9.1" + " loaded, slots:", typeof slots.register === "function" ? "OK" : "BROKEN");
 
 			// ThinkMeter + chain-aware tool grouping: the assistant-step shadow is
@@ -1265,7 +1346,7 @@ window.__ModuleLoader__.load({
 		}
 
 		exports.apply = apply;
-		exports.inject = ["slots"];
+		exports.inject = ["slots", "uiConversation"];
 		return module.exports;
 	},
 });
