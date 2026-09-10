@@ -970,9 +970,13 @@ window.__ModuleLoader__.load({
 			}
 		}
 
-		/** Layout-invisible marker rendered by hidden round members. */
+		/**
+		 * Hidden round members render NOTHING. The shipped flow CSS hides
+		 * `:empty` wrappers AND excludes them from the sibling-gap rule, so any
+		 * real child (even a display:none one) would leave a residual gap.
+		 */
 		function hiddenMarker() {
-			return React.createElement("div", { className: "tkgrp-hidden", style: { display: "none" } });
+			return null;
 		}
 
 		/** One reasoning section of a card (official DisclosureRow fold). */
