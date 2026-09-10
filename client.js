@@ -76,6 +76,10 @@ window.__ModuleLoader__.load({
 			".tkgrp-dock-btn{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);border:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:20px;padding:2px 10px}",
 			".tkgrp-dock-btn:hover{color:var(--dsw-alias-label-primary)}",
 			".tkgrp-out{color:var(--dsw-alias-label-tertiary);white-space:pre-wrap;word-break:break-word;padding:2px 0 4px 22px;font-size:14px;line-height:24px}",
+			// DSH >=0.1.2 renders inline reasoning rows (ReasoningRow, marker
+			// data-variant="think") outside the keyed node slot; our fold card
+			// already carries that thinking, so hide the duplicates.
+			'[data-variant="think"]{display:none!important}', 
 			".tkgrp-thinkrow{padding-left:0;min-height:24px;position:relative;overflow:hidden}",
 			".tkgrp-think[data-state=running] .tkgrp-thinkrow:after{content:'';position:absolute;inset-block:0;left:0;width:300px;pointer-events:none;background:linear-gradient(90deg,transparent 0%,color-mix(in srgb,var(--dsw-alias-bg-base) 60%,transparent) 55%,transparent 100%);animation:tkcnt-sweep 2.6s ease-out infinite}",
 			".tkgrp-think-summary{color:var(--dsw-alias-label-tertiary);font-size:14px;line-height:24px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:auto;display:inline-block;vertical-align:middle;padding-left:8px}",
