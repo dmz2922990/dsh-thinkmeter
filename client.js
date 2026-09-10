@@ -887,7 +887,15 @@ window.__ModuleLoader__.load({
 			return React.createElement("div", { className: "tkgrp-root" }, children);
 		}
 
-		/** One round entry, shared by the assistant-step and tool-call seats. */
+		/**
+		 * DSH ≥0.1.2 renders a per-turn "turn-process" disclosure that repeats
+		 * the thinking our fold card already aggregates. Shadow it to nothing so
+		 * the card is the single presentation (no duplicate raw think rows).
+		 */
+		function TurnProcessShadow() {
+			return hiddenMarker();
+		}
+
 		/** One round entry, shared by the assistant-step and tool-call seats. */
 		function RoundEntry(props) {
 			var node = props.node;
@@ -1343,9 +1351,11 @@ window.__ModuleLoader__.load({
 				);
 			});
 
-			// Tool-call group shadow: registered only while the preference is on,
-			// so turning it off restores the shipped tool cards.
+			// Tool-call group shadow (+ the ≥0.1.2 turn-process disclosure):
+			// registered only while the preference is on, so turning it off
+			// restores the shipped tool cards and thinking rows.
 			var shadowDisp = null;
+			var processDisp = null;
 			function syncShadow() {
 				if (readPref() && shadowDisp === null) {
 					shadowDisp = slots.inject("conversation.chat.node", function () {
@@ -1359,11 +1369,28 @@ window.__ModuleLoader__.load({
 							RoundEntry,
 						);
 					});
+					processDisp = slots.inject("conversation.chat.node", function () {
+						return slots.register(
+							{
+								name: "conversation.chat.node",
+								key: "turn-process",
+								priority: -1,
+								locale: "conversation",
+							},
+							TurnProcessShadow,
+						);
+					});
 				} else if (!readPref() && shadowDisp !== null) {
 					try {
 						shadowDisp();
 					} catch (e) {}
 					shadowDisp = null;
+					if (processDisp !== null) {
+						try {
+							processDisp();
+						} catch (e) {}
+						processDisp = null;
+					}
 				}
 			}
 			prefListeners.add(syncShadow);
@@ -1377,6 +1404,12 @@ window.__ModuleLoader__.load({
 							shadowDisp();
 						} catch (e) {}
 						shadowDisp = null;
+					}
+					if (processDisp !== null) {
+						try {
+							processDisp();
+						} catch (e) {}
+						processDisp = null;
 					}
 					try {
 						disposeSettings && disposeSettings();
