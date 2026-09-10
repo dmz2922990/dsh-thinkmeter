@@ -693,6 +693,24 @@ window.__ModuleLoader__.load({
 		}
 
 		/** Resolve one entry's inject compartment into concrete props (cached per entry). */
+		/** Render one tool node through the SHIPPED card (used when ungrouped). */
+		function fallbackShippedTool(props, node) {
+			var shipped = findShippedToolComponent();
+			if (shipped === null) return null;
+			var kit = kitOf(props);
+			var delegated = Object.assign({}, props, shippedToolCache.injectProps, {
+				node: node,
+				renderSlot: function (key, owner, opts) {
+					return dispatchSlot(key, owner, opts, kit);
+				},
+			});
+			return React.createElement(
+				SafeRoundBoundary,
+				{ fallback: function () { return null; } },
+				React.createElement(shipped, delegated),
+			);
+		}
+
 		var injectPropsCache = typeof WeakMap !== "undefined" ? new WeakMap() : null;
 
 		function buildInjectProps(entry) {
@@ -905,8 +923,10 @@ window.__ModuleLoader__.load({
 			);
 			try {
 				if (run === null) {
-					// Not groupable: plain per-node rendering.
+					// Not groupable: plain per-node rendering. Tool nodes must
+					// never vanish silently — delegate to the SHIPPED card.
 					if (node.kind === "assistant-step") return AssistantStep(props);
+					if (node.kind === "tool-call") return fallbackShippedTool(props, node);
 					return null;
 				}
 				// Hidden chain members render a marker element; the :has() CSS
@@ -1246,42 +1266,56 @@ window.__ModuleLoader__.load({
 			slotsRef = slots;
 			var disposeStyle = insertStyle();
 
-			// Resolve the chat data source for DSH ≥0.1.2 (where useSession no
-			// longer carries chat.nodes; the data lives behind uiConversation).
-			try {
-				var uiConv = ctx.get("uiConversation");
-				if (uiConv !== undefined && typeof uiConv.binding === "function") {
-					// Try the current session's binding at activation time and on
-					// each session switch; the target("chat") source is stable.
-					var resolveChatSource = function () {
-						try {
-							var sessions = ctx.get("sessions") ?? ctx.sessions;
-							var current = sessions !== undefined && typeof sessions.list !== "undefined" ? sessions.list.getSnapshot().current : undefined;
-							if (current === undefined) return;
-							var binding = uiConv.binding(current);
-							if (binding === undefined) return;
-							var source = binding.target("chat");
-							if (source !== undefined && source !== null) {
-								setChatSource(source);
-							}
-						} catch (e) {
-							console.warn("[thinkmeter] chat source resolve:", e.message);
-						}
-					};
-					resolveChatSource();
-					// Re-resolve on session changes.
-					try {
-						var sessList = ctx.sessions !== undefined ? ctx.sessions.list : undefined;
-						if (sessList !== undefined && typeof sessList.subscribe === "function") {
-							ctx.effect(function () {
-								return sessList.subscribe(resolveChatSource);
-							});
-						}
-					} catch (e) {}
+			// Resolve the chat data source for DSH ≥0.1.2 lazily: a hard `inject`
+			// on a service key that may differ would hang activation and silently
+			// disable the whole plugin.
+			var resolveChatSource = function () {
+				try {
+					var sessions = ctx.get("sessions");
+					var uiConv = ctx.get("uiConversation");
+					if (uiConv === undefined || sessions === undefined) return false;
+					var list = sessions.list;
+					var current = list !== undefined && typeof list.getSnapshot === "function" ? list.getSnapshot().current : undefined;
+					if (current === undefined) return false;
+					var binding = typeof uiConv.binding === "function" ? uiConv.binding(current) : undefined;
+					if (binding === undefined || binding === null) return false;
+					var source = typeof binding.target === "function" ? binding.target("chat") : undefined;
+					if (source === undefined || source === null) return false;
+					setChatSource(source);
+					console.log("[thinkmeter] chat source bound via uiConversation");
+					return true;
+				} catch (e) {
+					console.warn("[thinkmeter] chat source resolve:", e.message);
+					return false;
 				}
-			} catch (e) {
-				console.warn("[thinkmeter] uiConversation bridge:", e.message);
+			};
+			if (!resolveChatSource()) {
+				console.warn("[thinkmeter] uiConversation not ready yet — retrying");
+				var tries = 0;
+				var timer = setInterval(function () {
+					tries += 1;
+					if (resolveChatSource() || tries > 20) {
+						clearInterval(timer);
+						if (tries > 20) console.warn("[thinkmeter] chat source unresolved after retries");
+					}
+				}, 300);
+				ctx.effect(function () {
+					return function () {
+						clearInterval(timer);
+					};
+				});
 			}
+			try {
+				var sessSvc = ctx.get("sessions");
+				var sessList2 = sessSvc !== undefined ? sessSvc.list : undefined;
+				if (sessList2 !== undefined && typeof sessList2.subscribe === "function") {
+					ctx.effect(function () {
+						return sessList2.subscribe(function () {
+							resolveChatSource();
+						});
+					});
+				}
+			} catch (e) {}
 			console.log("[thinkmeter] v" + "0.9.1" + " loaded, slots:", typeof slots.register === "function" ? "OK" : "BROKEN");
 
 			// ThinkMeter + chain-aware tool grouping: the assistant-step shadow is
@@ -1362,7 +1396,7 @@ window.__ModuleLoader__.load({
 		}
 
 		exports.apply = apply;
-		exports.inject = ["slots", "uiConversation"];
+		exports.inject = ["slots"];
 		return module.exports;
 	},
 });
