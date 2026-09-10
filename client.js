@@ -1115,12 +1115,19 @@ window.__ModuleLoader__.load({
 				}
 			}
 			var headerRunning = run.running;
-			// Header: [Think duration & tokens, tool-call count]
+			// Think segment count (chain think members + the absorbed tail).
+			var thinkCount = 0;
+			for (var tc = 0; tc < run.nodes.length; tc++) {
+				if (run.nodes[tc].kind !== "tool-call") thinkCount++;
+			}
+			if (run.tail !== undefined && run.tail !== null) thinkCount++;
+			// Header: [Think duration & tokens, N think segments, tool-call count]
 			var parts = [];
 			if (headerTokens > 0) {
 				var duration = headerRunning && headerMs > 0 ? (Math.round(headerMs / 100) / 10).toFixed(1) + "s" : fmtDuration(headerMs);
 				parts.push("Think" + (duration !== "" ? " " + duration : "") + " · " + fmt(Math.round(headerTokens)) + " tokens");
 			}
+			if (thinkCount > 0) parts.push(thinkCount + " 次思考");
 			if (run.count > 0) parts.push(run.count + " 次工具调用");
 			if (parts.length === 0) parts.push("运行中");
 			var header = parts.join("，") + (headerRunning ? " · 运行中" : "");
@@ -1189,22 +1196,27 @@ window.__ModuleLoader__.load({
 					);
 				} else {
 					foldCount++;
-					children.push(
-						React.createElement(ThinkFold, {
-							key: "fold" + member.key,
-							data: member.data,
-						}),
-					);
+					// Think rows are part of the expanded content only.
+					if (isOpen) {
+						children.push(
+							React.createElement(ThinkFold, {
+								key: "fold" + member.key,
+								data: member.data,
+							}),
+						);
+					}
 				}
 			}
 			if (run.tail !== undefined && run.tail !== null) {
 				foldCount++;
-				children.push(
-					React.createElement(ThinkFold, {
-						key: "fold" + run.tail.key,
-						data: run.tail.data,
-					}),
-				);
+				if (isOpen) {
+					children.push(
+						React.createElement(ThinkFold, {
+							key: "fold" + run.tail.key,
+							data: run.tail.data,
+						}),
+					);
+				}
 			}
 			if (isOpen && run.count > 0 && shipped === null) {
 				children.push(
