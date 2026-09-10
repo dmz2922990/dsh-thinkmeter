@@ -217,6 +217,7 @@ window.__ModuleLoader__.load({
 		}
 
 		var diagLogged = false;
+		var gapDiagDone = false;
 		function diagNodes(useSession, nodeKey) {
 			if (diagLogged) return;
 			diagLogged = true;
@@ -1061,6 +1062,39 @@ window.__ModuleLoader__.load({
 			var run = props.run;
 			var propsSource = props.props;
 			// (each Think fold manages its own expansion state)
+			// One-shot layout diagnostic (logged once per page).
+			var diagRef = React.useRef(null);
+			React.useEffect(
+				function () {
+					if (gapDiagDone) return;
+					gapDiagDone = true;
+					try {
+						var el = diagRef.current;
+						if (el === null) return;
+						var wrapper = el.parentElement;
+						console.log("[thinkmeter] gap diag: wrapper", wrapper && wrapper.className, "h=", wrapper && Math.round(wrapper.getBoundingClientRect().height));
+						var sib = wrapper;
+						for (var i = 0; i < 6 && sib !== null; i++) {
+							sib = sib.nextElementSibling;
+							if (sib === null) break;
+							var cs = window.getComputedStyle(sib);
+							console.log(
+								"[thinkmeter] gap diag sib" + i,
+								sib.className,
+								"kind=" + (sib.getAttribute("data-chat-anchor-key") !== null ? sib.getAttribute("data-chat-flow-kind") : "-"),
+								"hidden=" + (sib.hasAttribute("hidden") ? sib.getAttribute("hidden") : "no"),
+								"children=" + sib.childElementCount,
+								"h=" + Math.round(sib.getBoundingClientRect().height),
+								"mt=" + cs.marginTop,
+								"display=" + cs.display,
+							);
+						}
+					} catch (e) {
+						console.warn("[thinkmeter] gap diag failed:", e.message);
+					}
+				},
+				[],
+			);
 			// Live ticker while anything in the chain is running.
 			var tickState = React.useState(0);
 			var setTick = tickState[1];
@@ -1230,7 +1264,7 @@ window.__ModuleLoader__.load({
 			var rootClass = "tkgrp-root" + (run.running || run.count > 0 || foldCount > 0 ? " tkgrp-card" : "");
 			return React.createElement(
 				"div",
-				{ className: rootClass, "data-open": (run.count > 0 && isOpen) || undefined },
+				{ className: rootClass, ref: diagRef, "data-open": (run.count > 0 && isOpen) || undefined },
 				children,
 			);
 		}
